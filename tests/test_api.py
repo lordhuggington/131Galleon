@@ -714,6 +714,23 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(self.c.get("/photos/not-a-real-name.jpg").status_code, 404)
         self.assertEqual(self.c.get("/photos/" + "a" * 32 + ".jpg").status_code, 404)
 
+    def test_photo_names_that_try_to_escape_the_photos_directory(self):
+        """Three gates stand in front of the filesystem: the route convertor, PHOTO_NAME_RE, then the row.
+
+        httpx resolves '../' itself, so that one leaves as GET /house.db and never reaches the route; the
+        percent-encoded form does arrive at the app. Either way nothing outside the photos folder is served.
+        """
+        self.login("maria")
+        secret = "sqlite-bytes-nobody-should-see"
+        (Path(self.tmp.name) / "house.db").write_text(secret)
+        for url in ("/photos/../house.db", "/photos/%2e%2e%2fhouse.db",
+                    "/photos/" + "a" * 32 + ".JPG", "/photos/" + "a" * 31 + ".jpg"):
+            with self.subTest(url=url):
+                r = self.c.get(url)
+                self.assertEqual(r.status_code, 404)
+                self.assertNotIn(secret, r.text)
+                self.assertNotEqual(r.headers.get("content-type"), "image/jpeg")
+
     def test_a_row_without_its_file_is_a_404(self):
         self.login("maria")
         photo = self.c.post("/api/visits/2026-09-29/photos?kind=done", content=JPEG, headers=PHOTO_HEADERS).json()["photo"]
