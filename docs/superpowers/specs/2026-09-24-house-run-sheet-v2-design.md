@@ -215,7 +215,7 @@ Input from users is messy. Rules: strip everything except digits and a leading `
 | Method/path | Auth | Body → result |
 |---|---|---|
 | `GET /api/login/options` | public | `{"sms": bool}` |
-| `POST /api/login/sms/start` | public | `{phone}` → `{"ok": true}`. Normalizes the phone. If `sms_enabled` is false → 503 `{"error": "Text-message sign-in isn't set up.", "smsUnavailable": true}`. If the send throttle blocks the phone → 429. If an **active** user with that phone exists, call `start_verification`; otherwise do nothing. **Always** return `{"ok": true}` in both cases so phone numbers can't be enumerated. `SmsError` → 502 with its message. |
+| `POST /api/login/sms/start` | public | `{phone}` → `{"ok": true}`. Normalizes the phone. If `sms_enabled` is false → 503 `{"error": "Text-message sign-in isn't set up.", "smsUnavailable": true}`. If the send throttle blocks the phone → 429. If an **active** user with that phone exists, call `start_verification`; otherwise do nothing. **Always** return `{"ok": true}` in both cases so phone numbers can't be enumerated. A `SmsError` from the send is therefore swallowed, not surfaced: `app/sms.py` has already logged it with the number redacted, and the response stays `{"ok": true}` — a distinct answer here (even a generic 502) would confirm membership, since the send only ever runs for a number that is on file. |
 | `POST /api/login/sms/check` | public | `{phone, code}` → `{"me": …}` + session cookie (identical to today's password login response). Normalize phone; validate `code` is 4–10 digits (else 400); if `throttle.blocked(phone)` → 429 (same message as today). Find the active user with that phone. If there is none, do **not** call Twilio: `throttle.fail(phone)` and 401. Otherwise call `check_verification`; False → `throttle.fail(phone)` and 401. The 401 message is always `"That code isn't right or has expired."`. On success `throttle.reset(phone)` and create the session. |
 | `POST /api/login` (password) | public | Unchanged body. Now only succeeds when the user is active **and** has a `password_hash` **and** (`role == 'owner'` **or** `phone IS NULL`). The "staff with no phone yet" allowance exists so nobody is locked out by the upgrade; once an owner sets a staff member's phone, their `password_hash` is set to NULL. Failure message stays "Wrong username or password." |
 | `PUT /api/me/password` | signed in | Unchanged for owners. Staff → 400 "Staff sign in by text message and don't have a password." |
@@ -223,7 +223,7 @@ Input from users is messy. Rules: strip everything except digits and a leading `
 
 **Send throttle:** a second `LoginThrottle(limit=3, window=600)` instance keyed by phone, checked in `sms/start`, `.fail()` on every send, never reset by success (it is a rate limit, not a lockout).
 
-**Throttle on check:** the existing `throttle` (5 fails / 15 min) keyed by phone.
+**Throttle on check:** a **separate** `LoginThrottle(limit=5, window=900)` instance, `sms_check_throttle`, keyed by phone — not the `throttle` used by `/api/login`. Usernames have no charset restriction, so sharing one instance would let anyone lock a phone out of text-message sign-in by posting failed password attempts with that number as the username.
 
 ### 6.5 CLI (`app/cli.py`)
 

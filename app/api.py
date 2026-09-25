@@ -218,7 +218,10 @@ def login_sms_start(request, conn, _user, body):
             # any distinct answer here — even a generic 502 — would confirm membership. app/sms.py
             # has already logged the failure (with the number redacted); add nothing.
             pass
-    # One answer for every case: on file or not, texted or not. No enumeration oracle.
+    # One answer for every case: on file or not, texted or not. No enumeration oracle in the response —
+    # but a number that is on file costs a Twilio round trip and one that isn't costs nothing, so the
+    # timing still tells an attacker (3 probes per number per 10 minutes, each one texting a real
+    # person). Closing that means sending off the request path, which v2 deliberately doesn't do.
     return {"ok": True}
 
 
