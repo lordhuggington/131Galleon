@@ -19,9 +19,13 @@ class ApiTest(unittest.TestCase):
         os.environ["HRS_DB_PATH"] = str(Path(self.tmp.name) / "test.db")
         os.environ["HRS_COOKIE_SECURE"] = "0"
         os.environ["ANTHROPIC_API_KEY"] = "test-key"
+        os.environ["TWILIO_ACCOUNT_SID"] = "AC123"
+        os.environ["TWILIO_AUTH_TOKEN"] = "tok"
+        os.environ["TWILIO_VERIFY_SERVICE_SID"] = "VA123"
         from app import cli
-        from app.auth import throttle
+        from app.auth import send_throttle, throttle
         throttle._fails.clear()
+        send_throttle._fails.clear()
         cli.main(["import-seed", str(ROOT / "seed")])
         cli.main(["create-user", "--username", "owen", "--name", "Owen", "--role", "owner", "--password", "owner-pass"])
         cli.main(["create-user", "--username", "maria", "--name", "Maria", "--role", "staff", "--password", "staff-pass"])
@@ -33,12 +37,25 @@ class ApiTest(unittest.TestCase):
     def tearDown(self):
         self.client_cm.__exit__(None, None, None)
         self.tmp.cleanup()
+        for k in ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_VERIFY_SERVICE_SID"):
+            os.environ.pop(k, None)
 
     def login(self, who: str):
         pw = {"owen": "owner-pass", "maria": "staff-pass"}[who]
         r = self.c.post("/api/login", json={"username": who, "password": pw}, headers=H)
         self.assertEqual(r.status_code, 200, r.text)
         return r.json()["me"]
+
+    def set_phone(self, username: str, phone: str | None, keep_password: bool = False) -> None:
+        """Put a phone number on a user directly, the way an owner or the CLI would. None clears it."""
+        from app.db import connect
+        conn = connect()
+        try:
+            conn.execute("UPDATE users SET phone = ? WHERE username = ?", (phone, username))
+            if not keep_password:
+                conn.execute("UPDATE users SET password_hash = NULL WHERE username = ?", (username,))
+        finally:
+            conn.close()
 
     # ---- auth ----
     def test_requires_login(self):
@@ -56,14 +73,20 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(r.status_code, 403)
 
     def test_change_own_password(self):
-        self.login("maria")
+        self.login("owen")
         r = self.c.put("/api/me/password", json={"current": "wrong", "new": "a-new-password"}, headers=H)
         self.assertEqual(r.status_code, 400)
-        r = self.c.put("/api/me/password", json={"current": "staff-pass", "new": "a-new-password"}, headers=H)
+        r = self.c.put("/api/me/password", json={"current": "owner-pass", "new": "a-new-password"}, headers=H)
         self.assertEqual(r.status_code, 200)
         self.c.post("/api/logout", headers=H)
-        r = self.c.post("/api/login", json={"username": "maria", "password": "a-new-password"}, headers=H)
+        r = self.c.post("/api/login", json={"username": "owen", "password": "a-new-password"}, headers=H)
         self.assertEqual(r.status_code, 200)
+
+    def test_staff_cannot_change_password(self):
+        self.login("maria")
+        r = self.c.put("/api/me/password", json={"current": "staff-pass", "new": "a-new-password"}, headers=H)
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.json()["error"], "Staff sign in by text message and don't have a password.")
 
     def test_me_includes_person_fields(self):
         me = self.login("maria")
@@ -74,6 +97,111 @@ class ApiTest(unittest.TestCase):
         self.assertTrue(me["canSeeMeals"])
         self.assertEqual(self.c.get("/api/me").json()["me"], me)
         self.assertEqual(self.c.get("/api/state").json()["me"], me)
+
+    # ---- sms sign-in ----
+    def test_login_options_reports_sms(self):
+        self.assertEqual(self.c.get("/api/login/options").json(), {"sms": True})
+        with mock.patch.dict(os.environ, {"TWILIO_AUTH_TOKEN": ""}):
+            self.assertEqual(self.c.get("/api/login/options").json(), {"sms": False})
+
+    def test_sms_start_unknown_phone_looks_identical(self):
+        with mock.patch("app.sms.start_verification") as send:
+            r = self.c.post("/api/login/sms/start", json={"phone": "(310) 555-9999"}, headers=H)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json(), {"ok": True})
+        send.assert_not_called()
+
+    def test_sms_start_texts_a_known_phone(self):
+        self.set_phone("maria", "+13105551234")
+        with mock.patch("app.sms.start_verification") as send:
+            r = self.c.post("/api/login/sms/start", json={"phone": "310.555.1234"}, headers=H)
+        self.assertEqual(r.status_code, 200, r.text)
+        send.assert_called_once_with("+13105551234")
+        r = self.c.post("/api/login/sms/start", json={"phone": "nope"}, headers=H)
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.json()["error"], "Enter a mobile number like (310) 555-1234.")
+
+    def test_sms_start_send_throttle(self):
+        self.set_phone("maria", "+13105551234")
+        with mock.patch("app.sms.start_verification"):
+            for _ in range(3):
+                self.assertEqual(self.c.post("/api/login/sms/start", json={"phone": "+13105551234"}, headers=H).status_code, 200)
+            r = self.c.post("/api/login/sms/start", json={"phone": "+13105551234"}, headers=H)
+        self.assertEqual(r.status_code, 429)
+        self.assertEqual(r.json()["error"], "Too many codes sent to that number. Wait 10 minutes.")
+
+    def test_sms_start_when_twilio_is_not_configured(self):
+        with mock.patch.dict(os.environ, {"TWILIO_VERIFY_SERVICE_SID": ""}), mock.patch("app.sms.start_verification") as send:
+            r = self.c.post("/api/login/sms/start", json={"phone": "+13105551234"}, headers=H)
+        self.assertEqual(r.status_code, 503)
+        self.assertEqual(r.json(), {"error": "Text-message sign-in isn't set up.", "smsUnavailable": True})
+        send.assert_not_called()
+
+    def test_sms_start_surfaces_twilio_errors(self):
+        from app.sms import SmsError
+        self.set_phone("maria", "+13105551234")
+        with mock.patch("app.sms.start_verification", side_effect=SmsError("Couldn't send the text message. Try again in a minute.")):
+            r = self.c.post("/api/login/sms/start", json={"phone": "+13105551234"}, headers=H)
+        self.assertEqual(r.status_code, 502)
+        self.assertEqual(r.json()["error"], "Couldn't send the text message. Try again in a minute.")
+
+    def test_sms_check_signs_in(self):
+        self.set_phone("maria", "+13105551234")
+        with mock.patch("app.sms.check_verification", return_value=True) as check:
+            r = self.c.post("/api/login/sms/check", json={"phone": "(310) 555-1234", "code": "123456"}, headers=H)
+        self.assertEqual(r.status_code, 200, r.text)
+        check.assert_called_once_with("+13105551234", "123456")
+        self.assertEqual(r.json()["me"]["username"], "maria")
+        self.assertEqual(r.json()["me"]["phone"], "+13105551234")
+        self.assertEqual(self.c.get("/api/me").status_code, 200)  # the cookie works
+
+    def test_sms_check_wrong_code_then_lockout(self):
+        self.set_phone("maria", "+13105551234")
+        with mock.patch("app.sms.check_verification", return_value=False):
+            for _ in range(5):
+                r = self.c.post("/api/login/sms/check", json={"phone": "+13105551234", "code": "000000"}, headers=H)
+                self.assertEqual(r.status_code, 401)
+                self.assertEqual(r.json()["error"], "That code isn't right or has expired.")
+            r = self.c.post("/api/login/sms/check", json={"phone": "+13105551234", "code": "000000"}, headers=H)
+        self.assertEqual(r.status_code, 429)
+        self.assertEqual(r.json()["error"], "Too many failed attempts. Wait 15 minutes and try again.")
+
+    def test_sms_check_unknown_phone_never_calls_twilio(self):
+        with mock.patch("app.sms.check_verification") as check:
+            r = self.c.post("/api/login/sms/check", json={"phone": "+13105559999", "code": "123456"}, headers=H)
+        self.assertEqual(r.status_code, 401)
+        self.assertEqual(r.json()["error"], "That code isn't right or has expired.")
+        check.assert_not_called()
+        r = self.c.post("/api/login/sms/check", json={"phone": "+13105559999", "code": "12"}, headers=H)
+        self.assertEqual(r.status_code, 400)
+
+    def test_sms_check_refused_when_unconfigured(self):
+        """With Twilio unset, check_verification would turn Twilio's 404 into a bogus 'wrong code'."""
+        self.set_phone("maria", "+13105551234")
+        env = {"TWILIO_ACCOUNT_SID": "", "TWILIO_AUTH_TOKEN": "", "TWILIO_VERIFY_SERVICE_SID": ""}
+        with mock.patch.dict(os.environ, env), mock.patch("app.sms.check_verification") as check:
+            r = self.c.post("/api/login/sms/check", json={"phone": "+13105551234", "code": "123456"}, headers=H)
+        self.assertEqual(r.status_code, 503)
+        self.assertEqual(r.json(), {"error": "Text-message sign-in isn't set up.", "smsUnavailable": True})
+        check.assert_not_called()
+
+    def test_password_login_rules(self):
+        # staff with a phone can't use their old password any more
+        self.set_phone("maria", "+13105551234", keep_password=True)
+        r = self.c.post("/api/login", json={"username": "maria", "password": "staff-pass"}, headers=H)
+        self.assertEqual(r.status_code, 401)
+        self.assertEqual(r.json()["error"], "Wrong username or password.")
+        # a staff member with no phone yet still can (the upgrade must not lock anyone out)
+        self.set_phone("maria", None, keep_password=True)
+        self.assertEqual(self.c.post("/api/login", json={"username": "maria", "password": "staff-pass"}, headers=H).status_code, 200)
+        self.c.post("/api/logout", headers=H)
+        # owners always can, phone or not
+        self.set_phone("owen", "+13105550000", keep_password=True)
+        self.assertEqual(self.c.post("/api/login", json={"username": "owen", "password": "owner-pass"}, headers=H).status_code, 200)
+        # a staff member with no password at all can't
+        self.c.post("/api/logout", headers=H)
+        self.set_phone("maria", "+13105551234")
+        self.assertEqual(self.c.post("/api/login", json={"username": "maria", "password": "staff-pass"}, headers=H).status_code, 401)
 
     # ---- roles ----
     def test_staff_limits(self):

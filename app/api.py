@@ -12,13 +12,14 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from . import ai, store
+from . import ai, sms, store
 from .auth import (COOKIE_NAME, ROLES, create_session, delete_session, delete_user_sessions, hash_password,
-                   password_problem, throttle, user_for_token, verify_password)
+                   normalize_phone, password_problem, send_throttle, throttle, user_for_token, verify_password)
 from .config import get_config
 from .db import connect, now_iso, tx
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+CODE_RE = re.compile(r"^\d{4,10}$")
 FREQS = ("visit", "weekly", "fortnightly", "monthly")
 DAYS = ("any", "tue", "fri")
 SESSIONS = ("tue", "fri")
@@ -137,6 +138,14 @@ def me_dict(u) -> dict:
 
 
 # ---------- auth ----------
+def _session_response(conn, row) -> JSONResponse:
+    token, max_age = create_session(conn, row["id"])
+    resp = JSONResponse({"me": me_dict(row)})
+    resp.set_cookie(COOKIE_NAME, token, max_age=max_age, httponly=True, secure=get_config().cookie_secure,
+                    samesite="lax", path="/")
+    return resp
+
+
 @endpoint(public=True)
 def login(request, conn, _user, body):
     username = s(body, "username", 64, required=True).lower()
@@ -144,16 +153,64 @@ def login(request, conn, _user, body):
     if throttle.blocked(username):
         return err(429, "Too many failed attempts. Wait 15 minutes and try again.")
     row = conn.execute("SELECT * FROM users WHERE username = ? AND active = 1", (username,)).fetchone()
-    ok = verify_password(password, row["password_hash"] if row else _DUMMY_HASH) and row is not None
+    # Password sign-in is for owners, plus staff who have no phone on file yet (so the v2 upgrade
+    # can't lock anyone out). Always run scrypt so unknown usernames take the same time.
+    stored = row["password_hash"] if row and row["password_hash"] else _DUMMY_HASH
+    ok = verify_password(password, stored)
+    if not row or not row["password_hash"] or not (row["role"] == "owner" or row["phone"] is None):
+        ok = False
     if not ok:
         throttle.fail(username)
         return err(401, "Wrong username or password.")
     throttle.reset(username)
-    token, max_age = create_session(conn, row["id"])
-    resp = JSONResponse({"me": me_dict(row)})
-    resp.set_cookie(COOKIE_NAME, token, max_age=max_age, httponly=True, secure=get_config().cookie_secure,
-                    samesite="lax", path="/")
-    return resp
+    return _session_response(conn, row)
+
+
+@endpoint(public=True)
+def login_options(request, conn, _user, _body):
+    return {"sms": get_config().sms_enabled}
+
+
+@endpoint(public=True)
+def login_sms_start(request, conn, _user, body):
+    phone = normalize_phone(body.get("phone") if isinstance(body.get("phone"), str) else "")
+    if not get_config().sms_enabled:
+        return JSONResponse({"error": "Text-message sign-in isn't set up.", "smsUnavailable": True}, status_code=503)
+    if send_throttle.blocked(phone):
+        return err(429, "Too many codes sent to that number. Wait 10 minutes.")
+    send_throttle.fail(phone)  # counted whether or not we actually text, so timing can't leak
+    row = conn.execute("SELECT id FROM users WHERE phone = ? AND active = 1", (phone,)).fetchone()
+    if row:
+        try:
+            sms.start_verification(phone)
+        except sms.SmsError as e:
+            return err(502, str(e))
+    return {"ok": True}  # identical answer for unknown numbers: no enumeration
+
+
+@endpoint(public=True)
+def login_sms_check(request, conn, _user, body):
+    phone = normalize_phone(body.get("phone") if isinstance(body.get("phone"), str) else "")
+    code = s(body, "code", 10, required=True)
+    if not CODE_RE.match(code):
+        raise ApiError(400, "Enter the 6-digit code from the text message.")
+    if not get_config().sms_enabled:
+        # Without a Verify service SID the check would hit a bogus URL and read as "wrong code".
+        return JSONResponse({"error": "Text-message sign-in isn't set up.", "smsUnavailable": True}, status_code=503)
+    if throttle.blocked(phone):
+        return err(429, "Too many failed attempts. Wait 15 minutes and try again.")
+    row = conn.execute("SELECT * FROM users WHERE phone = ? AND active = 1", (phone,)).fetchone()
+    ok = False
+    if row:
+        try:
+            ok = sms.check_verification(phone, code)
+        except sms.SmsError as e:
+            return err(502, str(e))
+    if not ok:
+        throttle.fail(phone)
+        return err(401, "That code isn't right or has expired.")
+    throttle.reset(phone)
+    return _session_response(conn, row)
 
 
 @endpoint(public=True)
@@ -171,10 +228,12 @@ def me(request, conn, user, _body):
 
 @endpoint()
 def change_my_password(request, conn, user, body):
+    if user["role"] != "owner":
+        raise ApiError(400, "Staff sign in by text message and don't have a password.")
     current = body.get("current") if isinstance(body.get("current"), str) else ""
     new = body.get("new") if isinstance(body.get("new"), str) else ""
     row = conn.execute("SELECT password_hash FROM users WHERE id = ?", (user["id"],)).fetchone()
-    if not verify_password(current, row["password_hash"]):
+    if not verify_password(current, row["password_hash"] or ""):
         raise ApiError(400, "Your current password is wrong.")
     if problem := password_problem(new):
         raise ApiError(400, problem)
@@ -444,6 +503,9 @@ async def healthz(request: Request) -> Response:
 routes = [
     Route("/healthz", healthz),
     Route("/api/login", login, methods=["POST"]),
+    Route("/api/login/options", login_options),
+    Route("/api/login/sms/start", login_sms_start, methods=["POST"]),
+    Route("/api/login/sms/check", login_sms_check, methods=["POST"]),
     Route("/api/logout", logout, methods=["POST"]),
     Route("/api/me", me),
     Route("/api/me/password", change_my_password, methods=["PUT"]),
