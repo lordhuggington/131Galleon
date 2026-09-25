@@ -182,9 +182,8 @@ export function PersonRow({ user }: { user: User }) {
         <Pill>{user.label || (user.role === "owner" ? "Owner" : "Staff")}</Pill>
         <Pill variant={user.role === "owner" ? "ok" : "oat"}>{user.role === "owner" ? "Owner" : "Staff"}</Pill>
       </div>
-      {isSelf ? (
-        <span className="small muted">You</span>
-      ) : state.ui.confirm === `pw:${user.id}` ? (
+      {isSelf ? <span className="small muted">You</span> : null}
+      {state.ui.confirm === `pw:${user.id}` && !isSelf ? (
         <form className="row" action={pwAction}>
           <input
             type="password"
@@ -222,14 +221,17 @@ export function PersonRow({ user }: { user: User }) {
           >
             Edit
           </Button>
-          {user.role === "owner" ? (
+          {user.role === "owner" && !isSelf ? (
             <Button variant="ghost" onClick={() => dispatch({ type: "confirm", key: `pw:${user.id}` })}>
               Reset password
             </Button>
           ) : null}
-          <Button variant="ghost" onClick={() => setActive(!user.active)}>
-            {user.active ? "Remove access" : "Restore access"}
-          </Button>
+          {/* Spec §5.5: your own row has no Remove (it still has Edit). */}
+          {isSelf ? null : (
+            <Button variant="ghost" onClick={() => setActive(!user.active)}>
+              {user.active ? "Remove access" : "Restore access"}
+            </Button>
+          )}
         </span>
       )}
     </div>
