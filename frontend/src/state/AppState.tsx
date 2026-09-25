@@ -280,7 +280,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Effects and callbacks read the latest state without re-subscribing.
   const stateRef = useRef(state);
   stateRef.current = state;
-  // Server data is only re-applied when its JSON signature changed (v1's lastSig trick).
+  // Server data is only re-applied when its JSON signature changed (v1's lastSig trick). The scope
+  // flag (wantPlan) is part of that signature, so a week with no menu still gets its "plan" dispatch
+  // -- and with it planLoaded -- the first time a tab asks for the plan; a null plan is otherwise
+  // indistinguishable from not having looked, and Meals would stay on "Loading menu…" for ever.
   const lastSig = useRef("");
   // Session identity for in-flight requests: a ref, not render state, because stateRef lags a
   // render and an await must never resurrect the data of a session that has since ended. The
@@ -350,7 +353,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         users = (await api<UsersResponse>("GET", "/api/users")).users;
         if (session.current.epoch !== started) return;
       }
-      const sig = JSON.stringify([data.me, data.tasks, data.visits, data.settings, planWeek, plan, users]);
+      const sig = JSON.stringify([data.me, data.tasks, data.visits, data.settings, planWeek, wantPlan, plan, users]);
       if (sig === lastSig.current) return;
       lastSig.current = sig;
       dispatch({ type: "server-state", payload: data });
