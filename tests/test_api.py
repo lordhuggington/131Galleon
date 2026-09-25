@@ -1,6 +1,8 @@
 """API tests. Run with:  python -m unittest discover -s tests -v"""
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import tempfile
@@ -13,11 +15,37 @@ ROOT = Path(__file__).resolve().parent.parent
 H = {"x-hrs": "1"}
 JPEG = b"\xff\xd8\xff" + b"\x00" * 200  # only the magic bytes are checked server-side
 PHOTO_HEADERS = {**H, "content-type": "image/jpeg"}
+# Every variable these tests set. Saved in setUp and restored in tearDown so the suite doesn't depend
+# on module order — the way tests/test_sms.py already does it.
+ENV_KEYS = ("HRS_DB_PATH", "HRS_PHOTOS_DIR", "HRS_COOKIE_SECURE", "ANTHROPIC_API_KEY",
+            "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_VERIFY_SERVICE_SID")
+
+
+def save_env() -> dict[str, str | None]:
+    return {k: os.environ.get(k) for k in ENV_KEYS}
+
+
+def restore_env(saved: dict[str, str | None]) -> None:
+    for k, v in saved.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+
+
+def run_cli(argv: list[str]) -> str:
+    """Run an admin command with its output captured, so the suite prints only unittest's own lines."""
+    from app import cli
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        cli.main(argv)
+    return out.getvalue()
 
 
 class ApiTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
+        self.saved_env = save_env()
         os.environ["HRS_DB_PATH"] = str(Path(self.tmp.name) / "test.db")
         os.environ["HRS_PHOTOS_DIR"] = str(Path(self.tmp.name) / "photos")
         os.environ["HRS_COOKIE_SECURE"] = "0"
@@ -25,14 +53,13 @@ class ApiTest(unittest.TestCase):
         os.environ["TWILIO_ACCOUNT_SID"] = "AC123"
         os.environ["TWILIO_AUTH_TOKEN"] = "tok"
         os.environ["TWILIO_VERIFY_SERVICE_SID"] = "VA123"
-        from app import cli
         from app.auth import send_throttle, sms_check_throttle, throttle
         throttle._fails.clear()
         sms_check_throttle._fails.clear()
         send_throttle._fails.clear()
-        cli.main(["import-seed", str(ROOT / "seed")])
-        cli.main(["create-user", "--username", "owen", "--name", "Owen", "--role", "owner", "--password", "owner-pass"])
-        cli.main(["create-user", "--username", "maria", "--name", "Maria", "--role", "staff", "--password", "staff-pass"])
+        run_cli(["import-seed", str(ROOT / "seed")])
+        run_cli(["create-user", "--username", "owen", "--name", "Owen", "--role", "owner", "--password", "owner-pass"])
+        run_cli(["create-user", "--username", "maria", "--name", "Maria", "--role", "staff", "--password", "staff-pass"])
         from starlette.testclient import TestClient
         from app.main import create_app
         self.client_cm = TestClient(create_app())
@@ -41,8 +68,7 @@ class ApiTest(unittest.TestCase):
     def tearDown(self):
         self.client_cm.__exit__(None, None, None)
         self.tmp.cleanup()
-        for k in ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_VERIFY_SERVICE_SID"):
-            os.environ.pop(k, None)
+        restore_env(self.saved_env)
 
     def login(self, who: str):
         pw = {"owen": "owner-pass", "maria": "staff-pass"}[who]
@@ -769,7 +795,11 @@ class StreamParsingTest(unittest.TestCase):
     """call_model against a fake Claude API that streams server-sent events."""
 
     def setUp(self):
+        self.saved_env = save_env()
         os.environ["ANTHROPIC_API_KEY"] = "test-key"
+
+    def tearDown(self):
+        restore_env(self.saved_env)
 
     def _transport(self, events, status=200):
         import httpx
