@@ -50,6 +50,13 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(r.status_code, 200, r.text)
         return r.json()["me"]
 
+    def sms_login(self, phone: str) -> str:
+        """Open a session the way a staff member with a phone does. Returns their session cookie."""
+        with mock.patch("app.sms.check_verification", return_value=True):
+            r = self.c.post("/api/login/sms/check", json={"phone": phone, "code": "123456"}, headers=H)
+        self.assertEqual(r.status_code, 200, r.text)
+        return self.c.cookies["hrs_session"]
+
     def set_phone(self, username: str, phone: str | None, keep_password: bool = False) -> None:
         """Put a phone number on a user directly, the way an owner or the CLI would. None clears it."""
         from app.db import connect
@@ -448,6 +455,34 @@ class ApiTest(unittest.TestCase):
         self.assertFalse(row["hasPassword"])
         self.c.cookies.set("hrs_session", sam_cookie)
         self.assertEqual(self.c.get("/api/me").status_code, 401)  # signed out everywhere
+
+    def test_resaving_a_staff_members_unchanged_phone_keeps_them_signed_in(self):
+        """Spec §5.5's editor submits every field on Save; only a real change may sign anyone out."""
+        self.login("owen")
+        pat = self.c.post("/api/users", json={"displayName": "Pat", "phone": "+1 (310) 555-1234"},
+                          headers=H).json()["user"]
+        pat_cookie = self.sms_login("(310) 555-1234")
+        self.login("owen")  # Pat's session row is still live
+        body = {"displayName": "Pat", "label": "Housekeeper", "phone": "+1 (310) 555-1234",
+                "doorCode": "4821", "canSeeMeals": True}
+        u = self.c.patch(f"/api/users/{pat['id']}", json=body, headers=H).json()["user"]
+        self.assertEqual(u["label"], "Housekeeper")
+        self.assertEqual(u["doorCode"], "4821")
+        self.assertEqual(u["phone"], "+13105551234")
+        self.assertEqual(u["hasPassword"], pat["hasPassword"])
+        self.c.cookies.set("hrs_session", pat_cookie)
+        self.assertEqual(self.c.get("/api/me").status_code, 200)  # still signed in on their phone
+
+    def test_a_no_op_role_patch_keeps_a_staff_member_signed_in(self):
+        self.login("owen")
+        pat = self.c.post("/api/users", json={"displayName": "Pat", "phone": "+13105551234"},
+                          headers=H).json()["user"]
+        pat_cookie = self.sms_login("+13105551234")
+        self.login("owen")
+        u = self.c.patch(f"/api/users/{pat['id']}", json={"role": "staff"}, headers=H).json()["user"]
+        self.assertEqual(u["role"], "staff")
+        self.c.cookies.set("hrs_session", pat_cookie)
+        self.assertEqual(self.c.get("/api/me").status_code, 200)
 
     def test_you_cannot_remove_your_own_owner_access(self):
         me = self.login("owen")

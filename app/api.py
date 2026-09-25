@@ -640,10 +640,14 @@ def update_user(request, conn, user, body):
             conn.execute("UPDATE users SET role = ?, active = ? WHERE id = ?", (new_role, 1 if active else 0, uid))
             if not active:
                 delete_user_sessions(conn, uid)
-        if new_phone and new_role != "owner" and ("phone" in body or "role" in body):
-            # This change leaves them staff-with-phone, whether it gave them the phone or took away
+        phone_changed = "phone" in body and new_phone != target["phone"]
+        became_staff = "role" in body and new_role != "owner" and target["role"] == "owner"
+        if new_phone and new_role != "owner" and (phone_changed or became_staff):
+            # This change *moved* them to staff-with-phone, whether it gave them the phone or took away
             # the owner role: they sign in by text from now on, so the password that login() will no
-            # longer accept goes, and the sessions it opened go with it.
+            # longer accept goes, and the sessions it opened go with it. Only a real transition counts —
+            # the People form re-submits every field on Save, and re-sending the number someone already
+            # has must not sign them out mid-visit.
             conn.execute("UPDATE users SET password_hash = NULL WHERE id = ?", (uid,))
             delete_user_sessions(conn, uid)
         if "password" in body:
