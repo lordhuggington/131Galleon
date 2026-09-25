@@ -85,9 +85,11 @@ function Shell() {
   }, [me, tab]);
 
   if (!state.booted) return <div className="empty">Loading your run sheet…</div>;
+  // A bare landmark: LoginScreen brings its own .login-wrap column, and .app would
+  // add the bottom nav's gap under a screen that has no bottom nav.
   if (!me)
     return (
-      <main className="app">
+      <main>
         <LoginScreen smsEnabled={smsEnabled} />
       </main>
     );
