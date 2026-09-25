@@ -112,5 +112,23 @@ class SmsLoggingTest(SmsTestBase):
         self.assertIn("+1310*******", self.logged[0])
 
 
+class NormalizePhoneTest(unittest.TestCase):
+    def test_accepts_the_shapes_people_type(self):
+        from app.auth import normalize_phone
+        for raw in ("3105551234", "(310) 555-1234", "310.555.1234", "13105551234", "1 310 555 1234",
+                    "+1 (310) 555-1234", "+13105551234"):
+            self.assertEqual(normalize_phone(raw), "+13105551234", raw)
+        self.assertEqual(normalize_phone("+44 20 7946 0958"), "+442079460958")
+
+    def test_rejects_junk(self):
+        from app.api import ApiError
+        from app.auth import normalize_phone
+        for raw in ("", "   ", "555", "abc", "12345678901234567890", "+1234567", "5551234"):
+            with self.assertRaises(ApiError, msg=raw) as cm:
+                normalize_phone(raw)
+            self.assertEqual(cm.exception.status, 400)
+            self.assertEqual(cm.exception.message, "Enter a mobile number like (310) 555-1234.")
+
+
 if __name__ == "__main__":
     unittest.main()

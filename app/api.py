@@ -130,7 +130,10 @@ def path_week(request: Request) -> str:
 
 
 def me_dict(u) -> dict:
-    return {"id": u["id"], "username": u["username"], "displayName": u["display_name"], "role": u["role"]}
+    """The signed-in person's own record. doorCode is only ever their own."""
+    return {"id": u["id"], "username": u["username"], "displayName": u["display_name"], "role": u["role"],
+            "label": u["label"], "phone": u["phone"], "doorCode": u["door_code"],
+            "canSeeMeals": u["role"] == "owner" or bool(u["can_see_meals"])}
 
 
 # ---------- auth ----------
@@ -377,7 +380,9 @@ def cancel_job(request, conn, user, _body):
 # ---------- people (owner) ----------
 def user_dict(r) -> dict:
     return {"id": r["id"], "username": r["username"], "displayName": r["display_name"], "role": r["role"],
-            "active": bool(r["active"])}
+            "label": r["label"], "phone": r["phone"], "doorCode": r["door_code"],
+            "canSeeMeals": bool(r["can_see_meals"]), "active": bool(r["active"]),
+            "hasPassword": bool(r["password_hash"])}
 
 
 @endpoint(role="owner")

@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import re
 import secrets
 import sqlite3
 import threading
@@ -46,6 +47,22 @@ def password_problem(password: str) -> str | None:
     return None
 
 
+def normalize_phone(raw: str) -> str:
+    """Turn messy user input into E.164 ('+13105551234'). Store and compare only this form."""
+    from .api import ApiError  # imported here: app.api imports this module at start-up
+
+    text = (raw or "").strip()
+    digits = re.sub(r"\D", "", text)
+    if text.startswith("+"):
+        if 8 <= len(digits) <= 15:
+            return "+" + digits
+    elif len(digits) == 10:
+        return "+1" + digits
+    elif len(digits) == 11 and digits.startswith("1"):
+        return "+" + digits
+    raise ApiError(400, "Enter a mobile number like (310) 555-1234.")
+
+
 def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
@@ -67,7 +84,8 @@ def user_for_token(conn: sqlite3.Connection, token: str | None) -> sqlite3.Row |
     if not token:
         return None
     return conn.execute(
-        """SELECT u.id, u.username, u.display_name, u.role FROM sessions s
+        """SELECT u.id, u.username, u.display_name, u.role, u.label, u.phone, u.door_code, u.can_see_meals
+           FROM sessions s
            JOIN users u ON u.id = s.user_id
            WHERE s.token_hash = ? AND s.expires_at > ? AND u.active = 1""",
         (_token_hash(token), now_iso()),
@@ -111,3 +129,6 @@ class LoginThrottle:
 
 
 throttle = LoginThrottle()
+# Rate limit on outgoing texts, keyed by phone number: 3 sends per 10 minutes. Unlike `throttle`
+# this is never reset by a success — it is a rate limit, not a lockout.
+send_throttle = LoginThrottle(limit=3, window=600)

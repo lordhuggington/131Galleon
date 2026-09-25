@@ -65,6 +65,16 @@ class ApiTest(unittest.TestCase):
         r = self.c.post("/api/login", json={"username": "maria", "password": "a-new-password"}, headers=H)
         self.assertEqual(r.status_code, 200)
 
+    def test_me_includes_person_fields(self):
+        me = self.login("maria")
+        self.assertEqual(me["role"], "staff")
+        self.assertEqual(me["label"], "")
+        self.assertIsNone(me["phone"])
+        self.assertIsNone(me["doorCode"])
+        self.assertTrue(me["canSeeMeals"])
+        self.assertEqual(self.c.get("/api/me").json()["me"], me)
+        self.assertEqual(self.c.get("/api/state").json()["me"], me)
+
     # ---- roles ----
     def test_staff_limits(self):
         self.login("maria")
