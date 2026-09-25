@@ -6,6 +6,7 @@ import { fmtLong, fmtShort, mondayOf, nextVisit, sessionOf, stepVisit, today } f
 import { doneDatesByTask, groupByArea, isDue, lastDoneBefore, sortTasks } from "../../lib/schedule";
 import { useApp, useCanSeeMeals, useIsOwner, useSettings } from "../../state/AppState";
 import { ExtraRow } from "./ExtraRow";
+import { PhotosCard } from "./PhotosCard";
 import { TaskRow } from "./TaskRow";
 import { VisitNote } from "./VisitNote";
 
@@ -181,7 +182,7 @@ export function VisitScreen() {
         ))
       )}
 
-      {/* PhotosCard goes here (Task 17) */}
+      <PhotosCard date={date} photos={visit?.photos ?? []} openUploaderOnMount={intent === "photo"} />
 
       <VisitNote key={date} date={date} note={visit?.note ?? ""} focusOnMount={intent === "note"} isOwner={isOwner} />
     </div>
