@@ -23,6 +23,10 @@ export function VisitNote({
   // The saved value, read inside timers without re-arming them.
   const saved = useRef(note);
   saved.current = note;
+  // Only a draft the person actually typed may be sent. A hidden <Activity> renders but runs no
+  // effects, so the sync below cannot adopt a note that lands while the Visit tab is off screen;
+  // without this flag the reveal's flush would PUT that stale empty draft over the stored note.
+  const dirty = useRef(false);
   // Read by the unmount cleanup so a tab switch mid-typing saves instead of dropping the draft.
   const flush = useRef(() => {});
   flush.current = () => save(draft);
@@ -47,7 +51,9 @@ export function VisitNote({
 
   function save(value: string) {
     window.clearTimeout(timer.current);
+    if (!dirty.current) return;
     if (value === saved.current) return;
+    dirty.current = false;
     dispatch({ type: "visit-note", date, note: value });
     void mutate("PUT", `/api/visits/${date}/note`, { note: value }).catch(() => {});
   }
@@ -67,6 +73,7 @@ export function VisitNote({
           onFocus={() => setFocused(true)}
           onChange={(e) => {
             const value = e.target.value;
+            dirty.current = true;
             setDraft(value);
             window.clearTimeout(timer.current);
             timer.current = window.setTimeout(() => save(value), SAVE_DELAY_MS);
