@@ -228,8 +228,8 @@ Input from users is messy. Rules: strip everything except digits and a leading `
 ### 6.5 CLI (`app/cli.py`)
 
 - `create-user --username U --name N --role owner|staff [--label L] [--phone P] [--door-code C] [--password PW]` — password required (prompted if absent) for owners; for staff `--password` is accepted for the transitional case but not prompted for.
-- `set-password --username U` — owners only (staff → error explaining SMS sign-in).
-- New `set-phone --username U --phone P` — normalizes, updates, clears `password_hash` for staff, signs the user out everywhere.
+- `set-password --username U` — owners, and staff with no phone on file (the break-glass when text-message sign-in is down); staff with a phone → error pointing at `set-phone --clear`.
+- New `set-phone --username U --phone P` — normalizes, updates, clears `password_hash` for staff, signs the user out everywhere. `set-phone --username U --clear` is the reverse: it removes the number, signs them out everywhere, and leaves any password alone, so `set-password` works for them again. `--phone` and `--clear` are mutually exclusive and one is required.
 - `--role` choices become `owner|staff`; the tests' `setUp` and README examples change accordingly.
 
 ## 7. Frontend
@@ -476,7 +476,7 @@ COPY --from=frontend /static ./static
 ## 16. Risks and mitigations
 
 - **Lock-out during upgrade:** staff keep password login until a phone is set (§6.4); owners always have a password. The README's "Updating" section tells the owner to add phones right after deploying.
-- **Twilio misconfiguration:** `sms_enabled` gate + `smsUnavailable` response keep the password path usable; errors from Twilio surface as readable messages.
+- **Twilio misconfiguration:** the `sms_enabled` gate + `smsUnavailable` response keep the password path usable for owners and for staff with no phone on file; staff who have a phone cannot sign in until Twilio is back, because `login()` refuses a password from them. The break-glass is on the server: `set-phone --username U --clear` then `set-password --username U` (see README "Text-message sign-in"). Errors from Twilio surface as readable messages.
 - **CSP and Vite:** verify the built `index.html` has no inline `<script>`; a test in the plan should grep the build output.
 - **SQLite table rebuild:** the migration test (§11) runs on every test run; `foreign_key_check` guards data integrity.
 - **Photo disk usage:** ~300 KB per photo after client resize; a household won't notice. No quota in v2.

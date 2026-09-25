@@ -3,8 +3,9 @@
     python -m app.cli migrate
     python -m app.cli create-user --username owen --name "Owen" --role owner
     python -m app.cli create-user --username maria --name "Maria" --role staff --label Housekeeper
-    python -m app.cli set-password --username owen          # owners only
+    python -m app.cli set-password --username owen          # owners, or staff with no phone on file
     python -m app.cli set-phone --username maria --phone "(310) 555-1234"
+    python -m app.cli set-phone --username maria --clear    # back to a password if Twilio is down
     python -m app.cli import-seed seed/
 """
 from __future__ import annotations
@@ -80,12 +81,15 @@ def cmd_create_user(args, conn) -> None:
 def cmd_set_password(args, conn) -> None:
     migrate(conn)
     username = args.username.strip().lower()
-    row = conn.execute("SELECT role FROM users WHERE username = ?", (username,)).fetchone()
+    row = conn.execute("SELECT role, phone FROM users WHERE username = ?", (username,)).fetchone()
     if not row:
         sys.exit(f"No user '{username}'.")
-    if row["role"] != "owner":
-        sys.exit(f"'{username}' is staff: they sign in with a code texted to their phone. "
-                 f"Use set-phone to give them a number.")
+    if row["role"] != "owner" and row["phone"]:
+        # login() never accepts a password from staff who have a phone, so setting one here would leave
+        # an unusable credential behind. Clearing the number first is the break-glass for a Twilio
+        # outage: it is a local admin command on the server, not something the API exposes.
+        sys.exit(f"'{username}' signs in with a code texted to their phone. Clear their number with "
+                 f"`set-phone --clear` first if they need a password.")
     pw_hash = _checked_hash(args.password or _ask_password())
     with tx(conn):
         conn.execute("UPDATE users SET password_hash = ?, active = 1 WHERE username = ?", (pw_hash, username))
@@ -99,6 +103,14 @@ def cmd_set_phone(args, conn) -> None:
     row = conn.execute("SELECT id, role FROM users WHERE username = ?", (username,)).fetchone()
     if not row:
         sys.exit(f"No user '{username}'.")
+    if args.clear:
+        # The other half of the break-glass: with no number on file, set-password works again. Any
+        # password_hash is left as it is (for staff it is already NULL).
+        with tx(conn):
+            conn.execute("UPDATE users SET phone = NULL WHERE id = ?", (row["id"],))
+            conn.execute("DELETE FROM sessions WHERE user_id = ?", (row["id"],))
+        print(f"'{username}' no longer has a phone on file; they were signed out everywhere.")
+        return
     phone = _normalize(args.phone)
     try:
         with tx(conn):
@@ -147,13 +159,16 @@ def main(argv: list[str] | None = None) -> None:
     cu.add_argument("--label", help='what they do, e.g. "Housekeeper", "Builder"')
     cu.add_argument("--phone", help="mobile number for text-message sign-in")
     cu.add_argument("--door-code", help="4 to 8 digits")
-    cu.add_argument("--password", help="owners only; omit to be prompted")
-    sp = sub.add_parser("set-password", help="reset an owner's password")
+    cu.add_argument("--password", help="owners, or staff with no phone; omit to be prompted (owners only)")
+    sp = sub.add_parser("set-password", help="reset a password (owners, or staff with no phone on file)")
     sp.add_argument("--username", required=True)
     sp.add_argument("--password", help="omit to be prompted")
-    ph = sub.add_parser("set-phone", help="set someone's mobile number for text-message sign-in")
+    ph = sub.add_parser("set-phone", help="set or clear someone's mobile number for text-message sign-in")
     ph.add_argument("--username", required=True)
-    ph.add_argument("--phone", required=True)
+    number = ph.add_mutually_exclusive_group(required=True)
+    number.add_argument("--phone", help="mobile number, e.g. \"(310) 555-1234\"")
+    number.add_argument("--clear", action="store_true",
+                        help="remove their number and sign them out everywhere")
     im = sub.add_parser("import-seed", help="load tasks, settings and meal plans from a folder")
     im.add_argument("path")
     args = ap.parse_args(argv)

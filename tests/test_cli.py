@@ -19,6 +19,14 @@ class CliTest(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def password_login(self, username: str, password: str) -> int:
+        """Ask the real API whether a password works — that is what the break-glass is for."""
+        from starlette.testclient import TestClient
+        from app.main import create_app
+        with TestClient(create_app()) as c:
+            return c.post("/api/login", json={"username": username, "password": password},
+                          headers={"x-hrs": "1"}).status_code
+
     def row(self, username: str):
         from app.db import connect
         conn = connect()
@@ -61,13 +69,58 @@ class CliTest(unittest.TestCase):
         with self.assertRaises(SystemExit):  # owen would collide with maria's number
             self.cli.main(["set-phone", "--username", "owen", "--phone", "+13105551234"])
 
-    def test_set_password_is_owners_only(self):
+    def test_set_password_works_for_owners_and_for_staff_with_no_phone(self):
+        """The break-glass when text messages stop working (spec §6.5, README "Text-message sign-in")."""
         self.cli.main(["create-user", "--username", "maria", "--name", "Maria", "--role", "staff"])
-        with self.assertRaises(SystemExit):
-            self.cli.main(["set-password", "--username", "maria", "--password", "long-enough-pw"])
-        self.cli.main(["set-password", "--username", "owen", "--password", "another-long-pw"])
+        self.cli.main(["set-password", "--username", "maria", "--password", "long-enough-pw"])
         from app.auth import verify_password
+        self.assertTrue(verify_password("long-enough-pw", self.row("maria")["password_hash"]))
+        self.assertEqual(self.password_login("maria", "long-enough-pw"), 200)
+        self.cli.main(["set-password", "--username", "owen", "--password", "another-long-pw"])
         self.assertTrue(verify_password("another-long-pw", self.row("owen")["password_hash"]))
+
+    def test_set_password_is_refused_for_staff_who_have_a_phone(self):
+        self.cli.main(["create-user", "--username", "maria", "--name", "Maria", "--role", "staff",
+                       "--phone", "310 555 1234"])
+        with self.assertRaises(SystemExit) as caught:
+            self.cli.main(["set-password", "--username", "maria", "--password", "long-enough-pw"])
+        self.assertEqual(str(caught.exception),
+                         "'maria' signs in with a code texted to their phone. Clear their number with "
+                         "`set-phone --clear` first if they need a password.")
+        self.assertIsNone(self.row("maria")["password_hash"])
+
+    def test_clearing_a_phone_signs_them_out_and_re_opens_the_password_path(self):
+        from app.auth import create_session
+        from app.db import connect
+        self.cli.main(["create-user", "--username", "maria", "--name", "Maria", "--role", "staff",
+                       "--phone", "310 555 1234"])
+        maria = self.row("maria")
+        conn = connect()
+        try:
+            create_session(conn, maria["id"])
+        finally:
+            conn.close()
+        self.cli.main(["set-phone", "--username", "maria", "--clear"])
+        self.assertIsNone(self.row("maria")["phone"])
+        conn = connect()
+        try:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM sessions WHERE user_id = ?",
+                                          (maria["id"],)).fetchone()[0], 0)
+        finally:
+            conn.close()
+        self.cli.main(["set-password", "--username", "maria", "--password", "long-enough-pw"])
+        self.assertEqual(self.password_login("maria", "long-enough-pw"), 200)
+
+    def test_clearing_a_phone_leaves_an_owners_password_alone(self):
+        self.cli.main(["set-phone", "--username", "owen", "--phone", "310 555 1234"])
+        self.cli.main(["set-phone", "--username", "owen", "--clear"])
+        self.assertIsNone(self.row("owen")["phone"])
+        self.assertEqual(self.password_login("owen", "owner-pass"), 200)
+
+    def test_set_phone_needs_either_a_number_or_clear(self):
+        with self.assertRaises(SystemExit) as caught:
+            self.cli.main(["set-phone", "--username", "owen"])
+        self.assertEqual(caught.exception.code, 2)  # argparse usage error
 
     def test_only_owners_are_prompted_for_a_password(self):
         with mock.patch("getpass.getpass", return_value="prompted-password") as asked:

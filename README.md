@@ -78,6 +78,17 @@ Either way, keep `HRS_COOKIE_SECURE=true` so login cookies are only sent over HT
 Leave any of the three values blank and the login screen falls back to username + password. Owners always keep
 a password; staff can still use theirs until you put a phone number on their record, which clears it.
 
+**If text messages stop working** (Twilio outage, expired auth token, unpaid bill): owners can still sign in with
+their password, and so can staff who have no number on file. Staff who do have one cannot — the app refuses a
+password from them. To get one of them back in, run two commands on the server:
+
+```bash
+python -m app.cli set-phone --username maria --clear      # removes the number, signs them out everywhere
+python -m app.cli set-password --username maria           # prompts for a password they can sign in with
+```
+
+Put their number back with `set-phone --phone` once Twilio is working; that clears the password again.
+
 ### Backups
 
 `deploy/backup.sh` takes a consistent copy of the SQLite database (safe while running), gzips it into `backups/`, keeps 30 days and optionally rsyncs to a Hetzner Storage Box (`BACKUP_TARGET`). Add it to cron:
@@ -110,8 +121,9 @@ using their old password only until they have one.
 python -m app.cli migrate
 python -m app.cli create-user --username NAME --name "Display name" --role owner|staff \
     [--label "Housekeeper"] [--phone "(310) 555-1234"] [--door-code 4821] [--password PW]
-python -m app.cli set-password --username NAME       # owners only; also signs them out everywhere
+python -m app.cli set-password --username NAME       # owners, or staff with no phone; signs them out everywhere
 python -m app.cli set-phone --username NAME --phone "(310) 555-1234"   # staff then sign in by text only
+python -m app.cli set-phone --username NAME --clear  # removes their number; signs them out everywhere
 python -m app.cli import-seed seed                   # re-import tasks/settings/plans (upserts)
 ```
 
