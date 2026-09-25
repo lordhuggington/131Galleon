@@ -19,6 +19,12 @@ mv "data/backup-$stamp.db" "$out"
 gzip -9 "$out"
 echo "$(date -Is) wrote $out.gz"
 find backups -name 'house-*.db.gz' -mtime +30 -delete
+# Photos live on disk next to the database; copy them so the off-site rsync below picks them up.
+if [[ -d data/photos ]]; then
+  mkdir -p backups/photos
+  rsync -a --delete data/photos/ backups/photos/
+  echo "$(date -Is) synced photos into backups/photos"
+fi
 if [[ -n "${BACKUP_TARGET:-}" ]]; then
   rsync -a -e "ssh -p 23" backups/ "$BACKUP_TARGET"
   echo "$(date -Is) synced to $BACKUP_TARGET"
