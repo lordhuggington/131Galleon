@@ -373,9 +373,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       okMsg?: string,
       opts?: { quiet?: boolean },
     ): Promise<void> => {
+      // A sign-out while the write is in flight must not pop a success toast over the login screen.
+      const started = session.current.epoch;
       try {
         await api<unknown>(method, path, body);
-        if (okMsg) toast(okMsg);
+        if (okMsg && session.current.epoch === started) toast(okMsg);
       } catch (e) {
         // Force the resync below to replace local state even if the server data is unchanged.
         lastSig.current = "";
