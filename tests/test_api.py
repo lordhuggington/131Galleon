@@ -508,6 +508,28 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(r.status_code, 403)
         self.assertEqual(r.json()["error"], "Meals aren't turned on for you.")
 
+    def test_state_hides_the_meal_settings_from_a_gated_staff_member(self):
+        """/api/state must not leak what /api/plans refuses: gated people get the defaults, same shape."""
+        from app import store
+        self.login("owen")
+        s = self.c.get("/api/state").json()["settings"]
+        s["likes"] = "kimchi-pancakes"
+        self.assertEqual(self.c.put("/api/settings", json=s, headers=H).status_code, 200)
+        self.assertEqual(self.c.get("/api/state").json()["settings"]["likes"], "kimchi-pancakes")
+        maria = [u for u in self.c.get("/api/users").json()["users"] if u["username"] == "maria"][0]
+        self.c.patch(f"/api/users/{maria['id']}", json={"canSeeMeals": False}, headers=H)
+        self.c.post("/api/logout", headers=H)
+        self.login("maria")
+        state = self.c.get("/api/state")
+        self.assertEqual(state.json()["settings"], store.default_settings())
+        self.assertNotIn("kimchi-pancakes", state.text)
+        self.c.post("/api/logout", headers=H)
+        self.login("owen")
+        self.c.patch(f"/api/users/{maria['id']}", json={"canSeeMeals": True}, headers=H)
+        self.c.post("/api/logout", headers=H)
+        self.login("maria")
+        self.assertEqual(self.c.get("/api/state").json()["settings"]["likes"], "kimchi-pancakes")
+
     # ---- photos ----
     def test_upload_photo_appears_in_state(self):
         self.login("maria")
@@ -522,11 +544,18 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(stored.read_bytes(), JPEG)
         visit = self.c.get("/api/state").json()["visits"]["2026-09-29"]
         self.assertEqual(len(visit["photos"]), 1)
-        self.assertEqual(visit["photos"][0]["id"], photo["id"])
+        self.assertEqual(visit["photos"][0], photo)  # list_visits and _photo_dict agree on the shape
         got = self.c.get(photo["url"])
         self.assertEqual(got.status_code, 200)
         self.assertEqual(got.content, JPEG)
         self.assertEqual(got.headers["cache-control"], "private, max-age=604800, immutable")
+
+    def test_upload_with_no_query_string_at_all(self):
+        self.login("maria")
+        r = self.c.post("/api/visits/2026-09-29/photos", content=JPEG, headers=PHOTO_HEADERS)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["photo"]["kind"], "done")  # the default
+        self.assertEqual(r.json()["photo"]["caption"], "")
 
     def test_photo_upload_validation(self):
         self.login("maria")

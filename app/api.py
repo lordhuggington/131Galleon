@@ -1,6 +1,7 @@
 """JSON API. Every handler runs in a worker thread with its own SQLite connection."""
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import secrets
@@ -262,8 +263,11 @@ def change_my_password(request, conn, user, body):
 # ---------- state (polled by the page) ----------
 @endpoint()
 def state(request, conn, user, _body):
-    return {"me": me_dict(user), "tasks": store.list_tasks(conn), "visits": store.list_visits(conn),
-            "settings": store.get_settings(conn)}
+    # Someone who can't see meals gets the default settings, not the household's: same shape for the
+    # page to render, none of the kcal targets, likes, dislikes or pantry.
+    me = me_dict(user)
+    return {"me": me, "tasks": store.list_tasks(conn), "visits": store.list_visits(conn),
+            "settings": store.get_settings(conn) if me["canSeeMeals"] else store.default_settings()}
 
 
 # ---------- tasks (owner) ----------
@@ -434,7 +438,12 @@ def delete_photo(request, conn, user, _body):
     if user["role"] != "owner" and row["created_by"] != user["id"]:
         raise ApiError(403, "You can only delete your own photos.")
     conn.execute("DELETE FROM visit_photos WHERE id = ?", (pid,))
-    (_photos_dir() / row["filename"]).unlink(missing_ok=True)
+    # The row is the source of truth: it's gone, so the photo is unreachable whatever happens to the
+    # file. Re-check the stored name (a hand-edited row shouldn't be able to aim the unlink) and let an
+    # unlink failure pass — the worst case is an orphaned file nothing can serve.
+    if PHOTO_NAME_RE.match(row["filename"]):
+        with contextlib.suppress(OSError):
+            (_photos_dir() / row["filename"]).unlink(missing_ok=True)
     return {"ok": True}
 
 

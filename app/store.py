@@ -16,13 +16,17 @@ DEFAULT_SETTINGS = {
 
 
 # ---------- settings ----------
+def default_settings() -> dict:
+    """A fresh copy of the defaults, nested sessions included. What someone who can't see meals gets."""
+    return {**DEFAULT_SETTINGS, "tue": dict(DEFAULT_SETTINGS["tue"]), "fri": dict(DEFAULT_SETTINGS["fri"])}
+
+
 def get_settings(conn: sqlite3.Connection) -> dict:
     row = conn.execute("SELECT value FROM settings WHERE key = 'meal'").fetchone()
     s = json.loads(row["value"]) if row else {}
-    out = {**DEFAULT_SETTINGS, **s}
-    for k in ("tue", "fri"):
-        out[k] = {**DEFAULT_SETTINGS[k], **(s.get(k) or {})}
-    return out
+    out = default_settings()
+    sessions = {k: {**out[k], **(s.get(k) or {})} for k in ("tue", "fri")}
+    return {**out, **s, **sessions}
 
 
 def save_settings(conn: sqlite3.Connection, s: dict) -> None:
