@@ -651,6 +651,30 @@ class ApiTest(unittest.TestCase):
         r = self.c.post("/api/visits/2026-09-29/photos?kind=done", content=JPEG, headers={"content-type": "image/jpeg"})
         self.assertEqual(r.status_code, 403)  # no X-HRS header
 
+    def oversized_chunks(self):
+        """PHOTO_MAX_BYTES + 1 bytes in 1 MB pieces. httpx sends a generator chunked, with no length."""
+        from app.api import PHOTO_MAX_BYTES
+        block = b"\xff\xd8\xff" + b"\x00" * (1024 * 1024 - 3)
+        remaining = PHOTO_MAX_BYTES + 1
+        while remaining > 0:
+            chunk = block[:remaining]
+            remaining -= len(chunk)
+            yield chunk
+
+    def test_an_oversized_chunked_upload_is_refused(self):
+        """No Content-Length to check, so the cap has to come from the stream as it arrives."""
+        self.login("maria")
+        r = self.c.post("/api/visits/2026-09-29/photos", content=self.oversized_chunks(), headers=PHOTO_HEADERS)
+        self.assertEqual(r.status_code, 413)
+        self.assertEqual(r.json()["error"], "That photo is too large.")
+        self.assertNotIn("content-length", {k.lower() for k in r.request.headers})
+
+    def test_an_anonymous_oversized_upload_is_refused_without_a_session(self):
+        """The size gate runs before the session lookup, so a stranger can't make a worker buffer 20 MB."""
+        r = self.c.post("/api/visits/2026-09-29/photos", content=self.oversized_chunks(), headers=PHOTO_HEADERS)
+        self.assertEqual(r.status_code, 413)
+        self.assertEqual(r.json()["error"], "That photo is too large.")
+
     def test_photos_require_a_session(self):
         self.assertEqual(self.c.get("/photos/" + "a" * 32 + ".jpg").status_code, 401)
         r = self.c.post("/api/visits/2026-09-29/photos?kind=done", content=JPEG, headers=PHOTO_HEADERS)

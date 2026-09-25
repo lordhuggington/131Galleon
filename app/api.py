@@ -46,17 +46,33 @@ def err(status: int, message: str) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=status)
 
 
-def endpoint(role: str | None = None, public: bool = False, raw_body: bool = False):
+def endpoint(role: str | None = None, public: bool = False, raw_body: bool = False,
+             max_bytes: int | None = None):
     """Wrap a sync handler(request, conn, user, body) with auth, CSRF header check, JSON parsing and errors.
 
     raw_body=True skips JSON parsing and passes the request body straight through as bytes (photo uploads).
+    max_bytes caps a raw body before it is buffered: an oversized Content-Length is refused unread, and a
+    chunked body is abandoned as soon as it goes over. Both happen before the session lookup, so an
+    anonymous request can't make a worker hold an arbitrary amount of memory.
     """
     def deco(fn: Callable[..., Any]):
         async def handler(request: Request) -> Response:
             if request.method not in ("GET", "HEAD") and request.headers.get("x-hrs") != "1":
                 return err(403, "Missing X-HRS request header.")
             body: Any = b"" if raw_body else {}
-            if raw_body:
+            if raw_body and max_bytes is not None:
+                declared = request.headers.get("content-length", "")
+                if declared.isdigit() and int(declared) > max_bytes:
+                    return err(413, "That photo is too large.")
+                chunks: list[bytes] = []
+                total = 0
+                async for chunk in request.stream():
+                    total += len(chunk)
+                    if total > max_bytes:
+                        return err(413, "That photo is too large.")  # stop reading; don't keep the rest
+                    chunks.append(chunk)
+                body = b"".join(chunks)
+            elif raw_body:
                 body = await request.body()
             elif request.method in ("POST", "PUT", "PATCH"):
                 raw = await request.body()
@@ -386,7 +402,7 @@ def _photo_dict(r, display_name: str) -> dict:
             "createdAt": r["created_at"], "by": {"id": r["created_by"], "displayName": display_name}}
 
 
-@endpoint(raw_body=True)
+@endpoint(raw_body=True, max_bytes=PHOTO_MAX_BYTES)
 def add_photo(request, conn, user, body):
     d = path_date(request)
     kind = request.query_params.get("kind", "done")
@@ -395,7 +411,7 @@ def add_photo(request, conn, user, body):
     caption = (request.query_params.get("caption") or "").strip()
     if len(caption) > 300:
         raise ApiError(400, "'caption' is too long (max 300 characters).")
-    if len(body) > PHOTO_MAX_BYTES:
+    if len(body) > PHOTO_MAX_BYTES:  # defence in depth: endpoint(max_bytes=…) already refused it unread
         raise ApiError(413, "That photo is too large.")
     if not body.startswith(JPEG_MAGIC):
         raise ApiError(415, "Only JPEG photos are accepted.")
