@@ -330,6 +330,18 @@ class ApiTest(unittest.TestCase):
         self.assertTrue(o["hasPassword"])
         self.assertTrue(o["canSeeMeals"])
 
+    def test_a_phone_on_a_new_staff_member_beats_a_password(self):
+        """login() never accepts a password from staff who have a phone, so no hash may be stored."""
+        self.login("owen")
+        u = self.c.post("/api/users", json={"displayName": "Pat", "phone": "+13105558888",
+                                            "password": "long-enough-pw"}, headers=H).json()["user"]
+        self.assertFalse(u["hasPassword"])
+        row = [x for x in self.c.get("/api/users").json()["users"] if x["id"] == u["id"]][0]
+        self.assertFalse(row["hasPassword"])
+        # staff with no phone yet may still be given one, so the v2 upgrade locks nobody out
+        v = self.c.post("/api/users", json={"displayName": "Alex", "password": "long-enough-pw"}, headers=H).json()["user"]
+        self.assertTrue(v["hasPassword"])
+
     def test_duplicate_phone_is_a_conflict(self):
         self.login("owen")
         self.c.post("/api/users", json={"displayName": "Pat", "phone": "+13105558888"}, headers=H)
@@ -342,6 +354,15 @@ class ApiTest(unittest.TestCase):
         # setting the same number back on the same person is fine
         self.assertEqual(self.c.patch(f"/api/users/{uid}", json={"phone": "+13105550001"}, headers=H).status_code, 200)
         self.assertEqual(self.c.patch(f"/api/users/{uid}", json={"phone": "+13105550001"}, headers=H).status_code, 200)
+
+    def test_a_phone_collides_with_an_inactive_holder_too(self):
+        """The UNIQUE index spans inactive rows, so the check has to as well."""
+        self.login("owen")
+        pat = self.c.post("/api/users", json={"displayName": "Pat", "phone": "+13105558888"}, headers=H).json()["user"]
+        self.assertEqual(self.c.patch(f"/api/users/{pat['id']}", json={"active": False}, headers=H).status_code, 200)
+        r = self.c.post("/api/users", json={"displayName": "Alex", "phone": "(310) 555-8888"}, headers=H)
+        self.assertEqual(r.status_code, 409)
+        self.assertEqual(r.json()["error"], "That phone number is already used by Pat.")
 
     def test_blank_phones_do_not_collide(self):
         """A missing phone must be SQL NULL, not '' — the UNIQUE index would reject the second ''."""
@@ -395,6 +416,50 @@ class ApiTest(unittest.TestCase):
         self.c.post("/api/logout", headers=H)
         r = self.c.post("/api/login", json={"username": "maria", "password": "staff-pass"}, headers=H)
         self.assertEqual(r.status_code, 401)
+
+    def test_an_owner_keeps_their_password_when_given_a_phone(self):
+        me = self.login("owen")
+        u = self.c.patch(f"/api/users/{me['id']}", json={"phone": "+13105550000"}, headers=H).json()["user"]
+        self.assertEqual(u["phone"], "+13105550000")
+        self.assertTrue(u["hasPassword"])
+        self.assertEqual(self.c.get("/api/me").status_code, 200)  # not signed out either
+        self.c.post("/api/logout", headers=H)
+        r = self.c.post("/api/login", json={"username": "owen", "password": "owner-pass"}, headers=H)
+        self.assertEqual(r.status_code, 200, r.text)
+
+    def test_demoting_a_phone_holding_owner_drops_their_password(self):
+        """The row ends up staff-with-phone, so the hash it kept as an owner has to go."""
+        self.login("owen")
+        sam = self.c.post("/api/users", json={"displayName": "Sam", "role": "owner", "phone": "+13105556666",
+                                              "password": "long-enough-pw"}, headers=H).json()["user"]
+        self.assertTrue(sam["hasPassword"])
+        self.c.post("/api/logout", headers=H)
+        self.assertEqual(self.c.post("/api/login", json={"username": "sam", "password": "long-enough-pw"},
+                                     headers=H).status_code, 200)
+        sam_cookie = self.c.cookies["hrs_session"]
+        self.login("owen")  # signs owen in again; Sam's session row is still live
+        u = self.c.patch(f"/api/users/{sam['id']}", json={"role": "staff"}, headers=H).json()["user"]
+        self.assertEqual(u["role"], "staff")
+        self.assertFalse(u["hasPassword"])
+        row = [x for x in self.c.get("/api/users").json()["users"] if x["id"] == sam["id"]][0]
+        self.assertFalse(row["hasPassword"])
+        self.c.cookies.set("hrs_session", sam_cookie)
+        self.assertEqual(self.c.get("/api/me").status_code, 401)  # signed out everywhere
+
+    def test_you_cannot_remove_your_own_owner_access(self):
+        me = self.login("owen")
+        for body in ({"active": False}, {"role": "staff"}):
+            r = self.c.patch(f"/api/users/{me['id']}", json=body, headers=H)
+            self.assertEqual(r.status_code, 400, r.text)
+            self.assertEqual(r.json()["error"], "You can't remove your own owner access.")
+        self.assertEqual(self.c.get("/api/me").json()["me"]["role"], "owner")
+
+    def test_an_empty_patch_changes_nothing(self):
+        self.login("owen")
+        maria = [u for u in self.c.get("/api/users").json()["users"] if u["username"] == "maria"][0]
+        r = self.c.patch(f"/api/users/{maria['id']}", json={}, headers=H)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["user"], maria)
 
     def test_staff_cannot_manage_people(self):
         me = self.login("maria")

@@ -509,7 +509,9 @@ def create_user(request, conn, user, body):
         username = _derive_username(conn, display)
     password = body.get("password") if isinstance(body.get("password"), str) else ""
     pw_hash = None
-    if role == "owner" or password:  # owners always have a password; staff sign in by text
+    # Owners always have a password. Staff sign in by text, so one is only kept for staff who have no
+    # phone yet: login() refuses a password from staff who do, so that hash could never be used again.
+    if role == "owner" or (password and not phone):
         if problem := password_problem(password):
             raise ApiError(400, problem)
         pw_hash = hash_password(password)
@@ -539,13 +541,10 @@ def update_user(request, conn, user, body):
             conn.execute("UPDATE users SET can_see_meals = ? WHERE id = ?", (1 if boolean(body, "canSeeMeals") else 0, uid))
         if "doorCode" in body:
             conn.execute("UPDATE users SET door_code = ? WHERE id = ?", (_door_code_field(body), uid))
+        new_phone = target["phone"]
         if "phone" in body:
-            phone = _phone_field(body, conn, uid)
-            conn.execute("UPDATE users SET phone = ? WHERE id = ?", (phone, uid))
-            if phone and new_role != "owner":
-                # staff sign in by text from now on; their password can't be used any more
-                conn.execute("UPDATE users SET password_hash = NULL WHERE id = ?", (uid,))
-                delete_user_sessions(conn, uid)
+            new_phone = _phone_field(body, conn, uid)
+            conn.execute("UPDATE users SET phone = ? WHERE id = ?", (new_phone, uid))
         if "role" in body or "active" in body:
             active = boolean(body, "active") if "active" in body else bool(target["active"])
             if uid == user["id"] and (new_role != "owner" or not active):
@@ -553,6 +552,12 @@ def update_user(request, conn, user, body):
             conn.execute("UPDATE users SET role = ?, active = ? WHERE id = ?", (new_role, 1 if active else 0, uid))
             if not active:
                 delete_user_sessions(conn, uid)
+        if new_phone and new_role != "owner" and ("phone" in body or "role" in body):
+            # This change leaves them staff-with-phone, whether it gave them the phone or took away
+            # the owner role: they sign in by text from now on, so the password that login() will no
+            # longer accept goes, and the sessions it opened go with it.
+            conn.execute("UPDATE users SET password_hash = NULL WHERE id = ?", (uid,))
+            delete_user_sessions(conn, uid)
         if "password" in body:
             if new_role != "owner":
                 raise ApiError(400, "Staff sign in by text message and don't have a password.")
