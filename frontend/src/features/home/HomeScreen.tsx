@@ -24,7 +24,8 @@ export function HomeScreen() {
 
   const t0 = today();
   const visitDate = nextVisit(t0);
-  const week = mondayOf(t0);
+  // The next visit's week — the same week Meals opens on and refresh() loads for Home.
+  const week = mondayOf(visitDate);
   const plan = state.plans[week] ?? null;
   const planLoaded = state.planLoaded[week] === true;
   const visit = state.visits[visitDate];

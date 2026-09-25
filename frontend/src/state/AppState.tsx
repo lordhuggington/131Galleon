@@ -337,8 +337,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const isOwner = data.me.role === "owner";
       const mealsAllowed = isOwner || data.me.canSeeMeals;
       const { tab } = snapshot.ui;
-      // Home shows this week's meals/shopping tiles; Meals and Shopping show the week on screen.
-      const planWeek = tab === "home" ? mondayOf(today()) : snapshot.ui.week;
+      // Home shows the next visit's week; Meals and Shopping show the week on screen.
+      const planWeek = tab === "home" ? mondayOf(nextVisit(today())) : snapshot.ui.week;
       const wantPlan = (tab === "home" || tab === "meals" || tab === "shopping") && mealsAllowed;
       let plan: Plan | null = null;
       if (wantPlan) {
