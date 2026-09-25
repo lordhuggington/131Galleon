@@ -182,9 +182,20 @@ export function VisitScreen() {
         ))
       )}
 
-      <PhotosCard key={date} date={date} photos={visit?.photos ?? []} openUploaderOnMount={intent === "photo"} />
+      <PhotosCard
+        key={`photos-${date}`}
+        date={date}
+        photos={visit?.photos ?? []}
+        openUploaderOnMount={intent === "photo"}
+      />
 
-      <VisitNote key={date} date={date} note={visit?.note ?? ""} focusOnMount={intent === "note"} isOwner={isOwner} />
+      <VisitNote
+        key={`note-${date}`}
+        date={date}
+        note={visit?.note ?? ""}
+        focusOnMount={intent === "note"}
+        isOwner={isOwner}
+      />
     </div>
   );
 }
