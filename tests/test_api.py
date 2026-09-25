@@ -305,6 +305,129 @@ class ApiTest(unittest.TestCase):
         r = self.c.post("/api/login", json={"username": "sam", "password": "long-enough-pw"}, headers=H)
         self.assertEqual(r.status_code, 401)
 
+    # ---- people ----
+    def test_create_person_fields_and_derived_username(self):
+        self.login("owen")
+        body = {"displayName": "Maria", "role": "staff", "label": "Builder", "phone": "(310) 555-7777",
+                "doorCode": "4821", "canSeeMeals": False}
+        u = self.c.post("/api/users", json=body, headers=H).json()["user"]
+        self.assertEqual(u["username"], "maria-2")  # 'maria' is taken by setUp
+        self.assertEqual(u["label"], "Builder")
+        self.assertEqual(u["phone"], "+13105557777")
+        self.assertEqual(u["doorCode"], "4821")
+        self.assertFalse(u["canSeeMeals"])
+        self.assertFalse(u["hasPassword"])  # staff need no password
+        self.assertTrue(u["active"])
+        again = self.c.post("/api/users", json={"displayName": "Maria"}, headers=H).json()["user"]
+        self.assertEqual(again["username"], "maria-3")
+        self.assertEqual(again["role"], "staff")
+        # owners must have a password
+        r = self.c.post("/api/users", json={"displayName": "Sam", "role": "owner"}, headers=H)
+        self.assertEqual(r.status_code, 400)
+        o = self.c.post("/api/users", json={"displayName": "Sam", "role": "owner", "password": "long-enough-pw"},
+                        headers=H).json()["user"]
+        self.assertEqual(o["username"], "sam")
+        self.assertTrue(o["hasPassword"])
+        self.assertTrue(o["canSeeMeals"])
+
+    def test_duplicate_phone_is_a_conflict(self):
+        self.login("owen")
+        self.c.post("/api/users", json={"displayName": "Pat", "phone": "+13105558888"}, headers=H)
+        r = self.c.post("/api/users", json={"displayName": "Alex", "phone": "310 555 8888"}, headers=H)
+        self.assertEqual(r.status_code, 409)
+        self.assertEqual(r.json()["error"], "That phone number is already used by Pat.")
+        uid = self.c.post("/api/users", json={"displayName": "Alex"}, headers=H).json()["user"]["id"]
+        r = self.c.patch(f"/api/users/{uid}", json={"phone": "+13105558888"}, headers=H)
+        self.assertEqual(r.status_code, 409)
+        # setting the same number back on the same person is fine
+        self.assertEqual(self.c.patch(f"/api/users/{uid}", json={"phone": "+13105550001"}, headers=H).status_code, 200)
+        self.assertEqual(self.c.patch(f"/api/users/{uid}", json={"phone": "+13105550001"}, headers=H).status_code, 200)
+
+    def test_blank_phones_do_not_collide(self):
+        """A missing phone must be SQL NULL, not '' — the UNIQUE index would reject the second ''."""
+        self.login("owen")
+        for name in ("Pat", "Alex"):
+            r = self.c.post("/api/users", json={"displayName": name, "phone": "  "}, headers=H)
+            self.assertEqual(r.status_code, 200, r.text)
+            self.assertIsNone(r.json()["user"]["phone"])
+        uid = [u for u in self.c.get("/api/users").json()["users"] if u["displayName"] == "Pat"][0]["id"]
+        r = self.c.patch(f"/api/users/{uid}", json={"phone": ""}, headers=H)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertIsNone(r.json()["user"]["phone"])
+
+    def test_door_code_validation(self):
+        me = self.login("owen")
+        self.assertEqual(self.c.patch(f"/api/users/{me['id']}", json={"doorCode": "12"}, headers=H).status_code, 400)
+        r = self.c.patch(f"/api/users/{me['id']}", json={"doorCode": "12x4"}, headers=H)
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.json()["error"], "A door code is 4 to 8 digits.")
+        u = self.c.patch(f"/api/users/{me['id']}", json={"doorCode": "4821"}, headers=H).json()["user"]
+        self.assertEqual(u["doorCode"], "4821")
+        self.assertEqual(self.c.get("/api/me").json()["me"]["doorCode"], "4821")
+        u = self.c.patch(f"/api/users/{me['id']}", json={"doorCode": ""}, headers=H).json()["user"]
+        self.assertIsNone(u["doorCode"])
+
+    def test_door_codes_are_ascii_digits(self):
+        """\\d would accept Arabic-Indic digits, which no keypad can dial."""
+        me = self.login("owen")
+        r = self.c.patch(f"/api/users/{me['id']}", json={"doorCode": "٤٨٢١"}, headers=H)
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.json()["error"], "A door code is 4 to 8 digits.")
+
+    def test_explicit_usernames_are_checked(self):
+        self.login("owen")
+        r = self.c.post("/api/users", json={"displayName": "Pat", "username": "pat space"}, headers=H)
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.json()["error"], "Usernames use letters, numbers, dots, dashes or underscores.")
+        u = self.c.post("/api/users", json={"displayName": "Pat", "username": "Pat"}, headers=H).json()["user"]
+        self.assertEqual(u["username"], "pat")
+        r = self.c.post("/api/users", json={"displayName": "Patricia", "username": "pat"}, headers=H)
+        self.assertEqual(r.status_code, 409)
+        self.assertEqual(r.json()["error"], "That username is taken.")
+
+    def test_setting_a_staff_phone_clears_their_password_and_sessions(self):
+        me = self.login("maria")
+        self.c.post("/api/logout", headers=H)
+        self.login("owen")
+        u = self.c.patch(f"/api/users/{me['id']}", json={"phone": "(310) 555-1234"}, headers=H).json()["user"]
+        self.assertEqual(u["phone"], "+13105551234")
+        self.assertFalse(u["hasPassword"])
+        self.c.post("/api/logout", headers=H)
+        r = self.c.post("/api/login", json={"username": "maria", "password": "staff-pass"}, headers=H)
+        self.assertEqual(r.status_code, 401)
+
+    def test_staff_cannot_manage_people(self):
+        me = self.login("maria")
+        r = self.c.get("/api/users")
+        self.assertEqual(r.status_code, 403)
+        self.assertEqual(r.json()["error"], "Only an owner can do that.")
+        self.assertEqual(self.c.post("/api/users", json={"displayName": "X"}, headers=H).status_code, 403)
+        self.assertEqual(self.c.patch(f"/api/users/{me['id']}", json={"label": "X"}, headers=H).status_code, 403)
+
+    def test_staff_see_only_their_own_door_code(self):
+        me = self.login("owen")
+        self.c.patch(f"/api/users/{me['id']}", json={"doorCode": "99887766"}, headers=H)
+        maria = [u for u in self.c.get("/api/users").json()["users"] if u["username"] == "maria"][0]
+        self.assertEqual(self.c.patch(f"/api/users/{maria['id']}", json={"doorCode": "4821"}, headers=H).status_code, 200)
+        r = self.c.patch(f"/api/users/{maria['id']}", json={"password": "long-enough-pw"}, headers=H)
+        self.assertEqual(r.status_code, 400)  # staff have no password to reset
+        self.assertEqual(r.json()["error"], "Staff sign in by text message and don't have a password.")
+        self.c.post("/api/logout", headers=H)
+        self.login("maria")
+        state = self.c.get("/api/state")
+        self.assertEqual(state.json()["me"]["doorCode"], "4821")
+        self.assertNotIn("99887766", state.text)  # never anyone else's code
+
+    def test_owner_sees_meals_whatever_the_column_says(self):
+        """me_dict forces canSeeMeals on for owners; user_dict reports the stored column as it is."""
+        me = self.login("owen")
+        u = self.c.patch(f"/api/users/{me['id']}", json={"canSeeMeals": False}, headers=H).json()["user"]
+        self.assertFalse(u["canSeeMeals"])  # the column really was turned off
+        self.assertTrue(self.c.get("/api/me").json()["me"]["canSeeMeals"])
+        self.assertTrue(self.c.get("/api/state").json()["me"]["canSeeMeals"])
+        row = [x for x in self.c.get("/api/users").json()["users"] if x["id"] == me["id"]][0]
+        self.assertFalse(row["canSeeMeals"])
+
     # ---- AI generation (Claude API mocked) ----
     def test_generate_menu(self):
         self.login("owen")

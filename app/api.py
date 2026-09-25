@@ -21,6 +21,8 @@ from .db import connect, now_iso, tx
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 CODE_RE = re.compile(r"^\d{4,10}$")
+USERNAME_RE = re.compile(r"^[a-z0-9._-]{2,64}$")
+DOOR_CODE_RE = re.compile(r"^[0-9]{4,8}$")  # ASCII only: a keypad has no Unicode digits
 FREQS = ("visit", "weekly", "fortnightly", "monthly")
 DAYS = ("any", "tue", "fri")
 SESSIONS = ("tue", "fri")
@@ -449,6 +451,41 @@ def user_dict(r) -> dict:
             "hasPassword": bool(r["password_hash"])}
 
 
+def _derive_username(conn, display: str) -> str:
+    """Make a username from a display name: lower-case [a-z0-9.], then -2, -3… until it's free."""
+    base = re.sub(r"[^a-z0-9.]", "", display.lower())[:56] or "person"
+    name, n = base, 1
+    while conn.execute("SELECT 1 FROM users WHERE username = ?", (name,)).fetchone():
+        n += 1
+        name = f"{base}-{n}"
+    return name
+
+
+def _phone_field(body: dict, conn, exclude_id: int | None) -> str | None:
+    """Normalized phone from the body, or None when blank. Raises 409 if someone else has it."""
+    raw = body.get("phone")
+    if not isinstance(raw, str) or not raw.strip():
+        return None  # NULL, never '': the UNIQUE index would collide on the second blank
+    phone = normalize_phone(raw)
+    if exclude_id is None:
+        row = conn.execute("SELECT display_name FROM users WHERE phone = ?", (phone,)).fetchone()
+    else:
+        row = conn.execute("SELECT display_name FROM users WHERE phone = ? AND id != ?", (phone, exclude_id)).fetchone()
+    if row:
+        raise ApiError(409, f"That phone number is already used by {row['display_name']}.")
+    return phone
+
+
+def _door_code_field(body: dict) -> str | None:
+    raw = body.get("doorCode")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    code = raw.strip()
+    if not DOOR_CODE_RE.match(code):
+        raise ApiError(400, "A door code is 4 to 8 digits.")
+    return code
+
+
 @endpoint(role="owner")
 def list_users(request, conn, user, _body):
     return {"users": [user_dict(r) for r in conn.execute("SELECT * FROM users ORDER BY role, display_name")]}
@@ -456,18 +493,30 @@ def list_users(request, conn, user, _body):
 
 @endpoint(role="owner")
 def create_user(request, conn, user, body):
-    username = s(body, "username", 64, required=True).lower()
-    if not re.match(r"^[a-z0-9._-]{2,64}$", username):
-        raise ApiError(400, "Usernames use letters, numbers, dots, dashes or underscores.")
     display = s(body, "displayName", 80, required=True)
     role = choice(body, "role", ROLES, "staff")
+    label = s(body, "label", 40)
+    phone = _phone_field(body, conn, None)
+    door_code = _door_code_field(body)
+    can_see_meals = boolean(body, "canSeeMeals") if "canSeeMeals" in body else True
+    username = s(body, "username", 64).lower()
+    if username:
+        if not USERNAME_RE.match(username):
+            raise ApiError(400, "Usernames use letters, numbers, dots, dashes or underscores.")
+        if conn.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone():
+            raise ApiError(409, "That username is taken.")
+    else:
+        username = _derive_username(conn, display)
     password = body.get("password") if isinstance(body.get("password"), str) else ""
-    if problem := password_problem(password):
-        raise ApiError(400, problem)
-    if conn.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone():
-        raise ApiError(409, "That username is taken.")
-    cur = conn.execute("INSERT INTO users (username, display_name, role, password_hash, created_at) VALUES (?, ?, ?, ?, ?)",
-                       (username, display, role, hash_password(password), now_iso()))
+    pw_hash = None
+    if role == "owner" or password:  # owners always have a password; staff sign in by text
+        if problem := password_problem(password):
+            raise ApiError(400, problem)
+        pw_hash = hash_password(password)
+    cur = conn.execute(
+        """INSERT INTO users (username, display_name, role, label, phone, door_code, can_see_meals, password_hash, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (username, display, role, label, phone, door_code, 1 if can_see_meals else 0, pw_hash, now_iso()))
     return {"user": user_dict(conn.execute("SELECT * FROM users WHERE id = ?", (cur.lastrowid,)).fetchone())}
 
 
@@ -480,18 +529,33 @@ def update_user(request, conn, user, body):
     target = conn.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
     if not target:
         raise ApiError(404, "That person doesn't exist.")
+    new_role = choice(body, "role", ROLES) if "role" in body else target["role"]
     with tx(conn):
         if "displayName" in body:
             conn.execute("UPDATE users SET display_name = ? WHERE id = ?", (s(body, "displayName", 80, required=True), uid))
+        if "label" in body:
+            conn.execute("UPDATE users SET label = ? WHERE id = ?", (s(body, "label", 40), uid))
+        if "canSeeMeals" in body:
+            conn.execute("UPDATE users SET can_see_meals = ? WHERE id = ?", (1 if boolean(body, "canSeeMeals") else 0, uid))
+        if "doorCode" in body:
+            conn.execute("UPDATE users SET door_code = ? WHERE id = ?", (_door_code_field(body), uid))
+        if "phone" in body:
+            phone = _phone_field(body, conn, uid)
+            conn.execute("UPDATE users SET phone = ? WHERE id = ?", (phone, uid))
+            if phone and new_role != "owner":
+                # staff sign in by text from now on; their password can't be used any more
+                conn.execute("UPDATE users SET password_hash = NULL WHERE id = ?", (uid,))
+                delete_user_sessions(conn, uid)
         if "role" in body or "active" in body:
-            role = choice(body, "role", ROLES) if "role" in body else target["role"]
             active = boolean(body, "active") if "active" in body else bool(target["active"])
-            if uid == user["id"] and (role != "owner" or not active):
+            if uid == user["id"] and (new_role != "owner" or not active):
                 raise ApiError(400, "You can't remove your own owner access.")
-            conn.execute("UPDATE users SET role = ?, active = ? WHERE id = ?", (role, 1 if active else 0, uid))
+            conn.execute("UPDATE users SET role = ?, active = ? WHERE id = ?", (new_role, 1 if active else 0, uid))
             if not active:
                 delete_user_sessions(conn, uid)
         if "password" in body:
+            if new_role != "owner":
+                raise ApiError(400, "Staff sign in by text message and don't have a password.")
             pw = body.get("password") if isinstance(body.get("password"), str) else ""
             if problem := password_problem(pw):
                 raise ApiError(400, problem)

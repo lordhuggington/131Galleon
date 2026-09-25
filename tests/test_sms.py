@@ -123,7 +123,12 @@ class NormalizePhoneTest(unittest.TestCase):
     def test_rejects_junk(self):
         from app.api import ApiError
         from app.auth import normalize_phone
-        for raw in ("", "   ", "555", "abc", "12345678901234567890", "+1234567", "5551234"):
+        bad = ("", "   ", "555", "abc", "12345678901234567890", "+1234567", "5551234",
+               "0105551234", "1105551234",       # 0 and 1 are not area codes
+               "+1310555123", "+131055512345",   # a '+1' number is North American: exactly 11 digits
+               "+1 (010) 555-1234", "10105551234",
+               "٣١٠٥٥٥١٢٣٤")  # Arabic-Indic digits aren't phone digits
+        for raw in bad:
             with self.assertRaises(ApiError, msg=raw) as cm:
                 normalize_phone(raw)
             self.assertEqual(cm.exception.status, 400)

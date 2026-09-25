@@ -17,6 +17,7 @@ from .db import now_iso
 COOKIE_NAME = "hrs_session"
 ROLES = ("owner", "staff")
 MIN_PASSWORD_LEN = 10
+_NANP_RE = re.compile(r"^[2-9][0-9]{9}$")  # a North American number without its country code
 
 _SCRYPT_N, _SCRYPT_R, _SCRYPT_P = 2**15, 8, 1
 
@@ -52,14 +53,18 @@ def normalize_phone(raw: str) -> str:
     from .api import ApiError  # imported here: app.api imports this module at start-up
 
     text = (raw or "").strip()
-    digits = re.sub(r"\D", "", text)
-    if text.startswith("+"):
-        if 8 <= len(digits) <= 15:
+    # ASCII digits only: \d would also keep Unicode digits (٣, ３), which are not phone digits.
+    digits = re.sub(r"[^0-9]", "", text)
+    plus = text.startswith("+")
+    if digits.startswith("1") and (plus or len(digits) == 11):
+        # A leading 1, typed or as '+1', means North America: the country code plus 10 digits, no more.
+        if len(digits) == 11 and _NANP_RE.match(digits[1:]):
             return "+" + digits
-    elif len(digits) == 10:
+    elif plus:
+        if 8 <= len(digits) <= 15:  # some other country, whose numbering plan we can't check
+            return "+" + digits
+    elif _NANP_RE.match(digits):
         return "+1" + digits
-    elif len(digits) == 11 and digits.startswith("1"):
-        return "+" + digits
     raise ApiError(400, "Enter a mobile number like (310) 555-1234.")
 
 
