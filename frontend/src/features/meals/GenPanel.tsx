@@ -3,11 +3,20 @@ import { Button } from "../../components/Button";
 import { Card } from "../../components/Card";
 import { Field } from "../../components/Field";
 import { useApp } from "../../state/AppState";
-import { useGeneration } from "./useGeneration";
+import type { GenState } from "./useGeneration";
 
-export function GenPanel({ hasPlan }: { hasPlan: boolean }) {
+export function GenPanel({
+  hasPlan,
+  gen,
+  start,
+  stop,
+}: {
+  hasPlan: boolean;
+  gen: GenState;
+  start: (note: string) => void;
+  stop: () => void;
+}) {
   const { state, dispatch } = useApp();
-  const { gen, start, stop } = useGeneration();
   const [note, setNote] = useState("");
   const confirming = state.ui.confirm === "regen";
 
