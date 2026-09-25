@@ -129,6 +129,10 @@ class LoginThrottle:
 
 
 throttle = LoginThrottle()
+# Failed sign-in-code attempts, keyed by phone number. Deliberately a separate instance from
+# `throttle`: usernames have no charset restriction, so sharing one would let anyone lock a
+# phone out of text-message sign-in by posting /api/login with that number as the username.
+sms_check_throttle = LoginThrottle()
 # Rate limit on outgoing texts, keyed by phone number: 3 sends per 10 minutes. Unlike `throttle`
 # this is never reset by a success — it is a rate limit, not a lockout.
 send_throttle = LoginThrottle(limit=3, window=600)

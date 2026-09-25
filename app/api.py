@@ -14,7 +14,8 @@ from starlette.routing import Route
 
 from . import ai, sms, store
 from .auth import (COOKIE_NAME, ROLES, create_session, delete_session, delete_user_sessions, hash_password,
-                   normalize_phone, password_problem, send_throttle, throttle, user_for_token, verify_password)
+                   normalize_phone, password_problem, send_throttle, sms_check_throttle, throttle, user_for_token,
+                   verify_password)
 from .config import get_config
 from .db import connect, now_iso, tx
 
@@ -183,9 +184,13 @@ def login_sms_start(request, conn, _user, body):
     if row:
         try:
             sms.start_verification(phone)
-        except sms.SmsError as e:
-            return err(502, str(e))
-    return {"ok": True}  # identical answer for unknown numbers: no enumeration
+        except sms.SmsError:
+            # Swallowed on purpose: start_verification only runs for a number that IS on file, so
+            # any distinct answer here — even a generic 502 — would confirm membership. app/sms.py
+            # has already logged the failure (with the number redacted); add nothing.
+            pass
+    # One answer for every case: on file or not, texted or not. No enumeration oracle.
+    return {"ok": True}
 
 
 @endpoint(public=True)
@@ -197,7 +202,7 @@ def login_sms_check(request, conn, _user, body):
     if not get_config().sms_enabled:
         # Without a Verify service SID the check would hit a bogus URL and read as "wrong code".
         return JSONResponse({"error": "Text-message sign-in isn't set up.", "smsUnavailable": True}, status_code=503)
-    if throttle.blocked(phone):
+    if sms_check_throttle.blocked(phone):
         return err(429, "Too many failed attempts. Wait 15 minutes and try again.")
     row = conn.execute("SELECT * FROM users WHERE phone = ? AND active = 1", (phone,)).fetchone()
     ok = False
@@ -207,9 +212,9 @@ def login_sms_check(request, conn, _user, body):
         except sms.SmsError as e:
             return err(502, str(e))
     if not ok:
-        throttle.fail(phone)
+        sms_check_throttle.fail(phone)
         return err(401, "That code isn't right or has expired.")
-    throttle.reset(phone)
+    sms_check_throttle.reset(phone)
     return _session_response(conn, row)
 
 

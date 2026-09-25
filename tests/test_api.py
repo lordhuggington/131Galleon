@@ -23,8 +23,9 @@ class ApiTest(unittest.TestCase):
         os.environ["TWILIO_AUTH_TOKEN"] = "tok"
         os.environ["TWILIO_VERIFY_SERVICE_SID"] = "VA123"
         from app import cli
-        from app.auth import send_throttle, throttle
+        from app.auth import send_throttle, sms_check_throttle, throttle
         throttle._fails.clear()
+        sms_check_throttle._fails.clear()
         send_throttle._fails.clear()
         cli.main(["import-seed", str(ROOT / "seed")])
         cli.main(["create-user", "--username", "owen", "--name", "Owen", "--role", "owner", "--password", "owner-pass"])
@@ -128,7 +129,17 @@ class ApiTest(unittest.TestCase):
                 self.assertEqual(self.c.post("/api/login/sms/start", json={"phone": "+13105551234"}, headers=H).status_code, 200)
             r = self.c.post("/api/login/sms/start", json={"phone": "+13105551234"}, headers=H)
         self.assertEqual(r.status_code, 429)
-        self.assertEqual(r.json()["error"], "Too many codes sent to that number. Wait 10 minutes.")
+        self.assertEqual(r.json(), {"error": "Too many codes sent to that number. Wait 10 minutes."})
+
+    def test_sms_start_send_throttle_is_identical_for_an_unknown_number(self):
+        """Throttle accounting must not distinguish a number on file from one that isn't."""
+        with mock.patch("app.sms.start_verification") as send:
+            for _ in range(3):
+                self.assertEqual(self.c.post("/api/login/sms/start", json={"phone": "+13105559999"}, headers=H).status_code, 200)
+            r = self.c.post("/api/login/sms/start", json={"phone": "+13105559999"}, headers=H)
+            send.assert_not_called()
+        self.assertEqual(r.status_code, 429)
+        self.assertEqual(r.json(), {"error": "Too many codes sent to that number. Wait 10 minutes."})
 
     def test_sms_start_when_twilio_is_not_configured(self):
         with mock.patch.dict(os.environ, {"TWILIO_VERIFY_SERVICE_SID": ""}), mock.patch("app.sms.start_verification") as send:
@@ -137,13 +148,15 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(r.json(), {"error": "Text-message sign-in isn't set up.", "smsUnavailable": True})
         send.assert_not_called()
 
-    def test_sms_start_surfaces_twilio_errors(self):
+    def test_sms_start_hides_twilio_errors(self):
+        """A failed send must look like every other start: it only ever happens to a known number."""
         from app.sms import SmsError
         self.set_phone("maria", "+13105551234")
-        with mock.patch("app.sms.start_verification", side_effect=SmsError("Couldn't send the text message. Try again in a minute.")):
+        with mock.patch("app.sms.start_verification", side_effect=SmsError("Couldn't send the text message. Try again in a minute.")) as send:
             r = self.c.post("/api/login/sms/start", json={"phone": "+13105551234"}, headers=H)
-        self.assertEqual(r.status_code, 502)
-        self.assertEqual(r.json()["error"], "Couldn't send the text message. Try again in a minute.")
+        send.assert_called_once_with("+13105551234")
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json(), {"ok": True})
 
     def test_sms_check_signs_in(self):
         self.set_phone("maria", "+13105551234")
@@ -174,6 +187,17 @@ class ApiTest(unittest.TestCase):
         check.assert_not_called()
         r = self.c.post("/api/login/sms/check", json={"phone": "+13105559999", "code": "12"}, headers=H)
         self.assertEqual(r.status_code, 400)
+
+    def test_password_lockout_cannot_block_sms_check(self):
+        """Usernames have no charset limit, so the two lockouts must not share a key space."""
+        self.set_phone("maria", "+13105551234")
+        for _ in range(5):
+            r = self.c.post("/api/login", json={"username": "+13105551234", "password": "nope"}, headers=H)
+            self.assertEqual(r.status_code, 401)
+        with mock.patch("app.sms.check_verification", return_value=True) as check:
+            r = self.c.post("/api/login/sms/check", json={"phone": "+13105551234", "code": "123456"}, headers=H)
+        self.assertEqual(r.status_code, 200, r.text)
+        check.assert_called_once_with("+13105551234", "123456")
 
     def test_sms_check_refused_when_unconfigured(self):
         """With Twilio unset, check_verification would turn Twilio's 404 into a bogus 'wrong code'."""
