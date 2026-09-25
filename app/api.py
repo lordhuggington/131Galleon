@@ -637,6 +637,11 @@ def update_user(request, conn, user, body):
             active = boolean(body, "active") if "active" in body else bool(target["active"])
             if uid == user["id"] and (new_role != "owner" or not active):
                 raise ApiError(400, "You can't remove your own owner access.")
+            # Owners always have a password (§3.1): without one they can neither sign in by password nor
+            # by text, so a promotion has to bring a password with it unless they kept an old hash.
+            if "role" in body and new_role == "owner" and target["password_hash"] is None \
+                    and not isinstance(body.get("password"), str):
+                raise ApiError(400, "Give them a password when you make them an owner.")
             conn.execute("UPDATE users SET role = ?, active = ? WHERE id = ?", (new_role, 1 if active else 0, uid))
             if not active:
                 delete_user_sessions(conn, uid)

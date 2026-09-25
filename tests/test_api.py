@@ -484,6 +484,41 @@ class ApiTest(unittest.TestCase):
         self.c.cookies.set("hrs_session", pat_cookie)
         self.assertEqual(self.c.get("/api/me").status_code, 200)
 
+    def test_promoting_a_password_less_staff_member_needs_a_password(self):
+        """An owner with no hash and no phone couldn't sign in at all, so the promotion is refused."""
+        self.login("owen")
+        pat = self.c.post("/api/users", json={"displayName": "Pat", "phone": "+13105551234"},
+                          headers=H).json()["user"]
+        self.assertFalse(pat["hasPassword"])
+        r = self.c.patch(f"/api/users/{pat['id']}", json={"label": "Builder", "role": "owner"}, headers=H)
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.json()["error"], "Give them a password when you make them an owner.")
+        row = [x for x in self.c.get("/api/users").json()["users"] if x["id"] == pat["id"]][0]
+        self.assertEqual(row["role"], "staff")
+        self.assertEqual(row["label"], "")  # the tx rolled the whole PATCH back
+
+    def test_promoting_with_a_password_in_the_same_patch_works(self):
+        self.login("owen")
+        pat = self.c.post("/api/users", json={"displayName": "Pat", "phone": "+13105551234"},
+                          headers=H).json()["user"]
+        u = self.c.patch(f"/api/users/{pat['id']}", json={"role": "owner", "password": "long-enough-pw"},
+                         headers=H).json()["user"]
+        self.assertEqual(u["role"], "owner")
+        self.assertTrue(u["hasPassword"])
+        self.c.post("/api/logout", headers=H)
+        r = self.c.post("/api/login", json={"username": u["username"], "password": "long-enough-pw"}, headers=H)
+        self.assertEqual(r.status_code, 200, r.text)
+
+    def test_re_promoting_someone_who_kept_their_password_needs_nothing_extra(self):
+        self.login("owen")
+        sam = self.c.post("/api/users", json={"displayName": "Sam", "role": "owner",
+                                              "password": "long-enough-pw"}, headers=H).json()["user"]
+        u = self.c.patch(f"/api/users/{sam['id']}", json={"role": "staff"}, headers=H).json()["user"]
+        self.assertTrue(u["hasPassword"])  # no phone, so the hash stays usable
+        u = self.c.patch(f"/api/users/{sam['id']}", json={"role": "owner"}, headers=H).json()["user"]
+        self.assertEqual(u["role"], "owner")
+        self.assertTrue(u["hasPassword"])
+
     def test_you_cannot_remove_your_own_owner_access(self):
         me = self.login("owen")
         for body in ({"active": False}, {"role": "staff"}):
