@@ -282,9 +282,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   stateRef.current = state;
   // Server data is only re-applied when its JSON signature changed (v1's lastSig trick).
   const lastSig = useRef("");
+  // Session identity, bumped at dispatch time rather than read from render: stateRef lags a
+  // render, and an in-flight refresh must never resurrect the data of a signed-out session.
+  const session = useRef({ epoch: 0, signedIn: false });
 
   useEffect(() => {
     setUnauthorizedHandler(() => {
+      session.current.epoch += 1;
+      session.current.signedIn = false;
       lastSig.current = "";
       dispatch({ type: "signed-out" });
     });
@@ -300,10 +305,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const refresh = useCallback(async () => {
+    if (!session.current.signedIn) return;
+    // Any sign-in/sign-out while a request is in flight makes this pass stale: bail after
+    // every await so a late response can't dispatch the previous session's data.
+    const started = session.current.epoch;
     const snapshot = stateRef.current;
-    if (!snapshot.me) return;
     try {
       const data = await api<StateResponse>("GET", "/api/state");
+      if (session.current.epoch !== started) return;
       const isOwner = data.me.role === "owner";
       const mealsAllowed = isOwner || data.me.canSeeMeals;
       const { tab } = snapshot.ui;
@@ -311,9 +320,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const planWeek = tab === "home" ? mondayOf(today()) : snapshot.ui.week;
       const wantPlan = (tab === "home" || tab === "meals" || tab === "shopping") && mealsAllowed;
       let plan: Plan | null = null;
-      if (wantPlan) plan = (await api<PlanResponse>("GET", `/api/plans/${planWeek}`)).plan;
+      if (wantPlan) {
+        plan = (await api<PlanResponse>("GET", `/api/plans/${planWeek}`)).plan;
+        if (session.current.epoch !== started) return;
+      }
       let users: User[] | null = null;
-      if (tab === "setup" && isOwner) users = (await api<UsersResponse>("GET", "/api/users")).users;
+      if (tab === "setup" && isOwner) {
+        users = (await api<UsersResponse>("GET", "/api/users")).users;
+        if (session.current.epoch !== started) return;
+      }
       const sig = JSON.stringify([data.me, data.tasks, data.visits, data.settings, planWeek, plan, users]);
       if (sig === lastSig.current) return;
       lastSig.current = sig;
@@ -366,11 +381,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // No refresh() here: usePolling's scope effect fires on the sign-in transition
   // and does the first load, so calling it here would fetch twice.
   const signIn = useCallback(async (me: Me) => {
+    session.current.epoch += 1;
+    session.current.signedIn = true;
     lastSig.current = "";
     dispatch({ type: "signed-in", me });
   }, []);
 
   const signOut = useCallback(async () => {
+    // Bumped before the request, not after: the tap must invalidate any in-flight refresh
+    // immediately, even if /api/state answers while the logout is still on the wire.
+    session.current.epoch += 1;
+    session.current.signedIn = false;
     try {
       await api<unknown>("POST", "/api/logout");
     } catch {
