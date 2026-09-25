@@ -34,6 +34,39 @@ class MigrationTest(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_002_maps_roles_and_keeps_sessions(self):
+        from app.db import connect, migrate
+        conn = connect(self.path)
+        try:
+            apply_001(conn)
+            for uid, name, display, role in ((1, "owen", "Owen", "homeowner"), (2, "maria", "Maria", "housekeeper")):
+                conn.execute("INSERT INTO users (id, username, display_name, role, password_hash, active, created_at) "
+                             "VALUES (?, ?, ?, ?, 'hash', 1, '2026-01-01T00:00:00.000000Z')", (uid, name, display, role))
+            conn.execute("INSERT INTO sessions (token_hash, user_id, created_at, expires_at) "
+                         "VALUES ('abc', 2, '2026-01-01T00:00:00.000000Z', '2099-01-01T00:00:00.000000Z')")
+            conn.execute("INSERT INTO tasks (id, title, created_at, updated_at) VALUES ('t01', 'Wipe', 'x', 'x')")
+            conn.execute("INSERT INTO task_completions (visit_date, task_id, done_at, done_by) "
+                         "VALUES ('2026-09-29', 't01', 'x', 2)")
+
+            self.assertGreaterEqual(migrate(conn), 2)
+
+            rows = {r["username"]: r for r in conn.execute("SELECT * FROM users ORDER BY id")}
+            self.assertEqual(rows["owen"]["role"], "owner")
+            self.assertEqual(rows["owen"]["label"], "")
+            self.assertEqual(rows["maria"]["role"], "staff")
+            self.assertEqual(rows["maria"]["label"], "Housekeeper")
+            self.assertEqual(rows["maria"]["can_see_meals"], 1)
+            self.assertIsNone(rows["maria"]["phone"])
+            self.assertIsNone(rows["maria"]["door_code"])
+            self.assertEqual(rows["maria"]["password_hash"], "hash")
+            # the DROP + RENAME must not have cascaded away rows that point at users
+            self.assertEqual(conn.execute("SELECT user_id FROM sessions WHERE token_hash = 'abc'").fetchone()[0], 2)
+            self.assertEqual(conn.execute("SELECT done_by FROM task_completions").fetchone()[0], 2)
+            self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM visit_photos").fetchone()[0], 0)
+        finally:
+            conn.close()
+
 
 if __name__ == "__main__":
     unittest.main()

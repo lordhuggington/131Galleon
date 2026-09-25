@@ -20,7 +20,7 @@ API_URL = "https://api.anthropic.com/v1/messages"
 
 
 class GenerationError(Exception):
-    """An error whose message is safe to show to the homeowner."""
+    """An error whose message is safe to show to the owner."""
 
 
 def add_days(d: str, n: int) -> str:

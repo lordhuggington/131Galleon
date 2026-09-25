@@ -62,7 +62,7 @@ def endpoint(role: str | None = None, public: bool = False):
                         if not user:
                             return err(401, "Please sign in.")
                         if role and user["role"] != role:
-                            return err(403, "Only the homeowner can do that.")
+                            return err(403, "Only an owner can do that.")
                     result = fn(request, conn, user, body)
                     return result if isinstance(result, Response) else JSONResponse(result)
                 except ApiError as e:
@@ -187,7 +187,7 @@ def state(request, conn, user, _body):
             "settings": store.get_settings(conn)}
 
 
-# ---------- tasks (homeowner) ----------
+# ---------- tasks (owner) ----------
 def _task_fields(body: dict, partial: bool) -> dict:
     out = {}
     if not partial or "title" in body:
@@ -203,7 +203,7 @@ def _task_fields(body: dict, partial: bool) -> dict:
     return out
 
 
-@endpoint(role="homeowner")
+@endpoint(role="owner")
 def create_task(request, conn, user, body):
     f = _task_fields(body, partial=False)
     tid = "t" + secrets.token_hex(4)
@@ -212,7 +212,7 @@ def create_task(request, conn, user, body):
     return {"task": store.task_dict(conn.execute("SELECT * FROM tasks WHERE id = ?", (tid,)).fetchone())}
 
 
-@endpoint(role="homeowner")
+@endpoint(role="owner")
 def update_task(request, conn, user, body):
     tid = request.path_params["task_id"]
     f = _task_fields(body, partial=True)
@@ -225,7 +225,7 @@ def update_task(request, conn, user, body):
     return {"task": store.task_dict(conn.execute("SELECT * FROM tasks WHERE id = ?", (tid,)).fetchone())}
 
 
-@endpoint(role="homeowner")
+@endpoint(role="owner")
 def delete_task(request, conn, user, _body):
     cur = conn.execute("UPDATE tasks SET active = 0, updated_at = ? WHERE id = ?", (now_iso(), request.path_params["task_id"]))
     if cur.rowcount == 0:
@@ -258,7 +258,7 @@ def set_visit_note(request, conn, user, body):
     return {"ok": True}
 
 
-@endpoint(role="homeowner")
+@endpoint(role="owner")
 def add_extra(request, conn, user, body):
     d = path_date(request)
     title, notes = s(body, "title", 200, required=True), s(body, "notes", 500)
@@ -285,7 +285,7 @@ def set_extra_done(request, conn, user, body):
     return {"ok": True}
 
 
-@endpoint(role="homeowner")
+@endpoint(role="owner")
 def delete_extra(request, conn, user, _body):
     d, eid = path_date(request), _extra_id(request)
     conn.execute("DELETE FROM visit_extras WHERE id = ? AND visit_date = ?", (eid, d))
@@ -293,7 +293,7 @@ def delete_extra(request, conn, user, _body):
 
 
 # ---------- settings ----------
-@endpoint(role="homeowner")
+@endpoint(role="owner")
 def put_settings(request, conn, user, body):
     out = {"kcal": num(body, "kcal", 200, 1500), "protein": num(body, "protein", 10, 150)}
     for k in SESSIONS:
@@ -311,16 +311,16 @@ def put_settings(request, conn, user, body):
 # ---------- meal plans ----------
 @endpoint()
 def get_plan(request, conn, user, _body):
-    return {"plan": store.get_plan(conn, path_week(request), include_shopping=user["role"] == "homeowner")}
+    return {"plan": store.get_plan(conn, path_week(request), include_shopping=user["role"] == "owner")}
 
 
-@endpoint(role="homeowner")
+@endpoint(role="owner")
 def delete_plan(request, conn, user, _body):
     conn.execute("DELETE FROM meal_plans WHERE week = ?", (path_week(request),))
     return {"ok": True}
 
 
-@endpoint(role="homeowner")
+@endpoint(role="owner")
 def set_fav(request, conn, user, body):
     w = path_week(request)
     sess, slot = request.path_params["session"], request.path_params["slot"]
@@ -332,7 +332,7 @@ def set_fav(request, conn, user, body):
     return {"ok": True}
 
 
-@endpoint(role="homeowner")
+@endpoint(role="owner")
 def set_got(request, conn, user, body):
     w = path_week(request)
     cur = conn.execute("UPDATE shopping_items SET got = ? WHERE week = ? AND id = ?",
@@ -342,7 +342,7 @@ def set_got(request, conn, user, body):
     return {"ok": True}
 
 
-@endpoint(role="homeowner")
+@endpoint(role="owner")
 def generate(request, conn, user, body):
     w = path_week(request)
     note = s(body, "note", 500)
@@ -359,7 +359,7 @@ def _job_id(request) -> int:
         raise ApiError(404, "That job doesn't exist.")
 
 
-@endpoint(role="homeowner")
+@endpoint(role="owner")
 def get_job(request, conn, user, _body):
     r = conn.execute("SELECT * FROM ai_jobs WHERE id = ?", (_job_id(request),)).fetchone()
     if not r:
@@ -368,30 +368,30 @@ def get_job(request, conn, user, _body):
             "titles": json.loads(r["titles"]), "error": r["error"]}
 
 
-@endpoint(role="homeowner")
+@endpoint(role="owner")
 def cancel_job(request, conn, user, _body):
     conn.execute("UPDATE ai_jobs SET status = 'cancelling' WHERE id = ? AND status = 'running'", (_job_id(request),))
     return {"ok": True}
 
 
-# ---------- people (homeowner) ----------
+# ---------- people (owner) ----------
 def user_dict(r) -> dict:
     return {"id": r["id"], "username": r["username"], "displayName": r["display_name"], "role": r["role"],
             "active": bool(r["active"])}
 
 
-@endpoint(role="homeowner")
+@endpoint(role="owner")
 def list_users(request, conn, user, _body):
     return {"users": [user_dict(r) for r in conn.execute("SELECT * FROM users ORDER BY role, display_name")]}
 
 
-@endpoint(role="homeowner")
+@endpoint(role="owner")
 def create_user(request, conn, user, body):
     username = s(body, "username", 64, required=True).lower()
     if not re.match(r"^[a-z0-9._-]{2,64}$", username):
         raise ApiError(400, "Usernames use letters, numbers, dots, dashes or underscores.")
     display = s(body, "displayName", 80, required=True)
-    role = choice(body, "role", ROLES, "housekeeper")
+    role = choice(body, "role", ROLES, "staff")
     password = body.get("password") if isinstance(body.get("password"), str) else ""
     if problem := password_problem(password):
         raise ApiError(400, problem)
@@ -402,7 +402,7 @@ def create_user(request, conn, user, body):
     return {"user": user_dict(conn.execute("SELECT * FROM users WHERE id = ?", (cur.lastrowid,)).fetchone())}
 
 
-@endpoint(role="homeowner")
+@endpoint(role="owner")
 def update_user(request, conn, user, body):
     try:
         uid = int(request.path_params["user_id"])
@@ -417,8 +417,8 @@ def update_user(request, conn, user, body):
         if "role" in body or "active" in body:
             role = choice(body, "role", ROLES) if "role" in body else target["role"]
             active = boolean(body, "active") if "active" in body else bool(target["active"])
-            if uid == user["id"] and (role != "homeowner" or not active):
-                raise ApiError(400, "You can't remove your own homeowner access.")
+            if uid == user["id"] and (role != "owner" or not active):
+                raise ApiError(400, "You can't remove your own owner access.")
             conn.execute("UPDATE users SET role = ?, active = ? WHERE id = ?", (role, 1 if active else 0, uid))
             if not active:
                 delete_user_sessions(conn, uid)

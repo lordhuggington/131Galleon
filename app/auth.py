@@ -14,7 +14,7 @@ from .config import get_config
 from .db import now_iso
 
 COOKIE_NAME = "hrs_session"
-ROLES = ("homeowner", "housekeeper")
+ROLES = ("owner", "staff")
 MIN_PASSWORD_LEN = 10
 
 _SCRYPT_N, _SCRYPT_R, _SCRYPT_P = 2**15, 8, 1

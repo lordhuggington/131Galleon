@@ -23,8 +23,8 @@ class ApiTest(unittest.TestCase):
         from app.auth import throttle
         throttle._fails.clear()
         cli.main(["import-seed", str(ROOT / "seed")])
-        cli.main(["create-user", "--username", "owen", "--name", "Owen", "--role", "homeowner", "--password", "homeowner-pass"])
-        cli.main(["create-user", "--username", "maria", "--name", "Maria", "--role", "housekeeper", "--password", "housekeeper-pass"])
+        cli.main(["create-user", "--username", "owen", "--name", "Owen", "--role", "owner", "--password", "owner-pass"])
+        cli.main(["create-user", "--username", "maria", "--name", "Maria", "--role", "staff", "--password", "staff-pass"])
         from starlette.testclient import TestClient
         from app.main import create_app
         self.client_cm = TestClient(create_app())
@@ -35,7 +35,7 @@ class ApiTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def login(self, who: str):
-        pw = {"owen": "homeowner-pass", "maria": "housekeeper-pass"}[who]
+        pw = {"owen": "owner-pass", "maria": "staff-pass"}[who]
         r = self.c.post("/api/login", json={"username": who, "password": pw}, headers=H)
         self.assertEqual(r.status_code, 200, r.text)
         return r.json()["me"]
@@ -47,7 +47,7 @@ class ApiTest(unittest.TestCase):
     def test_wrong_password_and_lockout(self):
         for _ in range(5):
             self.assertEqual(self.c.post("/api/login", json={"username": "maria", "password": "nope"}, headers=H).status_code, 401)
-        r = self.c.post("/api/login", json={"username": "maria", "password": "housekeeper-pass"}, headers=H)
+        r = self.c.post("/api/login", json={"username": "maria", "password": "staff-pass"}, headers=H)
         self.assertEqual(r.status_code, 429)
 
     def test_mutations_need_csrf_header(self):
@@ -59,17 +59,17 @@ class ApiTest(unittest.TestCase):
         self.login("maria")
         r = self.c.put("/api/me/password", json={"current": "wrong", "new": "a-new-password"}, headers=H)
         self.assertEqual(r.status_code, 400)
-        r = self.c.put("/api/me/password", json={"current": "housekeeper-pass", "new": "a-new-password"}, headers=H)
+        r = self.c.put("/api/me/password", json={"current": "staff-pass", "new": "a-new-password"}, headers=H)
         self.assertEqual(r.status_code, 200)
         self.c.post("/api/logout", headers=H)
         r = self.c.post("/api/login", json={"username": "maria", "password": "a-new-password"}, headers=H)
         self.assertEqual(r.status_code, 200)
 
     # ---- roles ----
-    def test_housekeeper_limits(self):
+    def test_staff_limits(self):
         self.login("maria")
         state = self.c.get("/api/state").json()
-        self.assertEqual(state["me"]["role"], "housekeeper")
+        self.assertEqual(state["me"]["role"], "staff")
         self.assertEqual(len(state["tasks"]), 41)
         self.assertEqual(self.c.post("/api/tasks", json={"title": "x"}, headers=H).status_code, 403)
         self.assertEqual(self.c.get("/api/users").status_code, 403)
@@ -77,9 +77,9 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(self.c.post("/api/plans/2026-09-28/generate", json={}, headers=H).status_code, 403)
         plan = self.c.get("/api/plans/2026-09-28").json()["plan"]
         self.assertIn("sessions", plan)
-        self.assertNotIn("shopping", plan)  # shopping list is homeowner-only
+        self.assertNotIn("shopping", plan)  # shopping list is owner-only
 
-    def test_housekeeper_ticks_and_notes(self):
+    def test_staff_ticks_and_notes(self):
         self.login("maria")
         r = self.c.put("/api/visits/2026-09-29/tasks/t01", json={"done": True}, headers=H)
         self.assertEqual(r.status_code, 200)
@@ -100,7 +100,7 @@ class ApiTest(unittest.TestCase):
         extras = self.c.get("/api/state").json()["visits"]["2026-10-02"]["extras"]
         self.assertTrue(extras[eid]["done"])
 
-    # ---- homeowner ----
+    # ---- owner ----
     def test_task_crud(self):
         self.login("owen")
         t = self.c.post("/api/tasks", json={"title": "Clean garage fridge", "area": "Garage", "freq": "monthly", "day": "fri"}, headers=H).json()["task"]
@@ -134,9 +134,9 @@ class ApiTest(unittest.TestCase):
 
     def test_user_admin(self):
         me = self.login("owen")
-        r = self.c.post("/api/users", json={"username": "sam", "displayName": "Sam", "role": "housekeeper", "password": "short"}, headers=H)
+        r = self.c.post("/api/users", json={"username": "sam", "displayName": "Sam", "role": "staff", "password": "short"}, headers=H)
         self.assertEqual(r.status_code, 400)
-        u = self.c.post("/api/users", json={"username": "sam", "displayName": "Sam", "role": "housekeeper", "password": "long-enough-pw"}, headers=H).json()["user"]
+        u = self.c.post("/api/users", json={"username": "sam", "displayName": "Sam", "role": "staff", "password": "long-enough-pw"}, headers=H).json()["user"]
         self.assertEqual(self.c.patch(f"/api/users/{me['id']}", json={"active": False}, headers=H).status_code, 400)
         self.assertEqual(self.c.patch(f"/api/users/{u['id']}", json={"active": False}, headers=H).status_code, 200)
         self.c.post("/api/logout", headers=H)

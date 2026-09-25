@@ -1,7 +1,7 @@
 """Admin commands.
 
     python -m app.cli migrate
-    python -m app.cli create-user --username owen --name "Owen" --role homeowner
+    python -m app.cli create-user --username owen --name "Owen" --role owner
     python -m app.cli set-password --username owen
     python -m app.cli import-seed seed/
 """
@@ -89,7 +89,7 @@ def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(prog="python -m app.cli")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("migrate", help="create or upgrade the database")
-    cu = sub.add_parser("create-user", help="add a homeowner or housekeeper login")
+    cu = sub.add_parser("create-user", help="add an owner or staff login")
     cu.add_argument("--username", required=True)
     cu.add_argument("--name", help="display name")
     cu.add_argument("--role", choices=ROLES, required=True)
