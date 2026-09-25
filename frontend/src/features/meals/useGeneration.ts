@@ -13,6 +13,8 @@ export interface GenState {
 
 const IDLE: GenState = { running: false, status: "", titles: [], error: "", jobId: null };
 const JOB_POLL_MS = 2000;
+// Consecutive failed job polls before giving up (network blips are retried; a dead server is not).
+const JOB_POLL_MAX_FAILURES = 10;
 const FIRST_STATUS = "Thinking about this week's menu… (the first words usually take 20–60 seconds)";
 const GENERIC_ERROR = "Something went wrong while writing the menu. Try again.";
 
@@ -34,6 +36,7 @@ export function useGeneration(): { gen: GenState; start: (note: string) => void;
   const poll = useCallback(
     async (jobId: number) => {
       polling.current = true;
+      let failures = 0;
       try {
         for (;;) {
           await sleep(JOB_POLL_MS);
@@ -46,8 +49,22 @@ export function useGeneration(): { gen: GenState; start: (note: string) => void;
               jobRef.current = null;
               return;
             }
+            // A 4xx other than 401 means the job is gone or not ours; retrying cannot succeed.
+            if (e instanceof ApiError && e.status >= 400 && e.status < 500) {
+              jobRef.current = null;
+              setGen({ ...IDLE, error: e.message });
+              return;
+            }
+            failures += 1;
+            if (failures >= JOB_POLL_MAX_FAILURES) {
+              jobRef.current = null;
+              setGen({ ...IDLE, error: GENERIC_ERROR });
+              return;
+            }
             continue;
           }
+          failures = 0;
+          if (!alive.current) return;
           if (job.status === "running" || job.status === "cancelling") {
             setGen((g) => ({
               ...g,
