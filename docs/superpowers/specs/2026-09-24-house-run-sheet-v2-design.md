@@ -99,10 +99,14 @@ The look is a vintage Southern-California surf poster: warm cream backgrounds, s
   --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
   --r: 14px;              /* card radius */
   --r-sm: 10px;
+  --on-accent: #FFF3E0;   /* text on teal/ink fills (buttons, chips, banners, toast) */
+  --shadow-text: rgba(90, 62, 54, .35);   /* text-shadow on the sunset band */
+  --shadow-lift: rgba(90, 62, 54, .10);   /* bottom nav lift */
+  --shadow-scrim: rgba(90, 62, 54, .55);  /* dialog backdrop */
 }
 ```
 
-Semantic mapping from today's CSS: `--accent → --teal`, `--accent-ink → #FFF3E0`, `--accent-soft → --teal-soft`, `--oat → --orange` / `--oat-soft → --orange-soft`, `--warn → --rust` / `--warn-soft → --rust-soft`.
+Semantic mapping from today's CSS: `--accent → --teal`, `--accent-ink → --on-accent`, `--accent-soft → --teal-soft`, `--oat → --orange` / `--oat-soft → --orange-soft`, `--warn → --rust` / `--warn-soft → --rust-soft`.
 
 ### 4.2 Type
 
