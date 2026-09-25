@@ -16,8 +16,8 @@ Two kinds of people:
 | Delete anyone's photo | ✓ | own photos only |
 
 Staff get a free-text label ("Housekeeper", "Builder", "Pool service"), so anyone can be added without
-code changes. Everyone signs in with a code texted to their phone (Twilio, set up below); owners also keep
-a password as a backup.
+code changes. With Twilio set up (see below), everyone signs in with a code texted to their phone; owners
+also keep a password as a backup.
 
 Stack: Python 3.11+, [Starlette](https://www.starlette.io/) (the framework under FastAPI), SQLite, vanilla JS. Three dependencies: `starlette`, `uvicorn`, `httpx`.
 
@@ -37,9 +37,6 @@ uvicorn app.main:app --reload --port 8000
 ```
 
 Open http://localhost:8000.
-
-Staff sign in by text message, which needs Twilio (see below). To sign in as one locally, add
-`--password "…"` to the staff line above — that works only while they have no phone number on file.
 
 Tests: `python -m unittest discover -s tests -v`
 
@@ -119,6 +116,8 @@ python -m app.cli import-seed seed                   # re-import tasks/settings/
 ```
 
 Owners are prompted for a password when `--password` is left out; staff aren't, because they sign in by text.
+To test a staff account before Twilio is set up, give it `--password` as well — the app accepts that password
+only while the person has no phone number on file.
 
 Inside Docker prefix with `docker compose run --rm app` (or `docker compose exec app` while running).
 
