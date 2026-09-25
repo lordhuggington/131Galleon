@@ -614,6 +614,10 @@ def create_user(request, conn, user, body):
         username = _derive_username(conn, display)
     password = body.get("password") if isinstance(body.get("password"), str) else ""
     pw_hash = None
+    if role != "owner" and phone and password:
+        # Say so rather than dropping it: login() would never accept this password, so storing a hash
+        # would leave an unusable credential behind and the client would get no hint it was ignored.
+        raise ApiError(400, "They sign in by text, so they don't need a password.")
     # Owners always have a password. Staff sign in by text, so one is only kept for staff who have no
     # phone yet: login() refuses a password from staff who do, so that hash could never be used again.
     if role == "owner" or (password and not phone):

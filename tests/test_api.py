@@ -340,11 +340,16 @@ class ApiTest(unittest.TestCase):
         self.assertTrue(o["hasPassword"])
         self.assertTrue(o["canSeeMeals"])
 
-    def test_a_phone_on_a_new_staff_member_beats_a_password(self):
-        """login() never accepts a password from staff who have a phone, so no hash may be stored."""
+    def test_a_password_for_new_staff_with_a_phone_is_refused_not_dropped(self):
+        """login() never accepts a password from staff who have a phone, so no hash may be stored —
+        and a client that sent one is told, rather than having the field silently thrown away."""
         self.login("owen")
-        u = self.c.post("/api/users", json={"displayName": "Pat", "phone": "+13105558888",
-                                            "password": "long-enough-pw"}, headers=H).json()["user"]
+        r = self.c.post("/api/users", json={"displayName": "Pat", "phone": "+13105558888",
+                                            "password": "long-enough-pw"}, headers=H)
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.json()["error"], "They sign in by text, so they don't need a password.")
+        u = self.c.post("/api/users", json={"displayName": "Pat", "phone": "+13105558888"},
+                        headers=H).json()["user"]
         self.assertFalse(u["hasPassword"])
         row = [x for x in self.c.get("/api/users").json()["users"] if x["id"] == u["id"]][0]
         self.assertFalse(row["hasPassword"])

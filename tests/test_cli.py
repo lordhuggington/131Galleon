@@ -1,6 +1,8 @@
 """Admin command tests. Run with:  python3 -m unittest discover -s tests"""
 from __future__ import annotations
 
+import contextlib
+import io
 import os
 import tempfile
 import unittest
@@ -18,6 +20,13 @@ class CliTest(unittest.TestCase):
 
     def tearDown(self):
         self.tmp.cleanup()
+
+    def run_cli(self, argv: list[str]) -> str:
+        """Run an admin command with its output captured, so the suite prints only unittest's own lines."""
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.cli.main(argv)
+        return out.getvalue()
 
     def password_login(self, username: str, password: str) -> int:
         """Ask the real API whether a password works — that is what the break-glass is for."""
@@ -135,9 +144,11 @@ class CliTest(unittest.TestCase):
 
     def test_staff_who_have_a_phone_keep_no_password_hash(self):
         # login() refuses a password from staff who have a phone, so storing one would leave an
-        # unusable credential behind; /api/users drops it the same way.
-        self.cli.main(["create-user", "--username", "maria", "--name", "Maria", "--role", "staff",
-                       "--phone", "310 555 1234", "--password", "staff-pass"])
+        # unusable credential behind. The CLI still creates them, but says what it ignored;
+        # /api/users refuses the request outright.
+        out = self.run_cli(["create-user", "--username", "maria", "--name", "Maria", "--role", "staff",
+                            "--phone", "310 555 1234", "--password", "staff-pass"])
+        self.assertIn("Ignored --password: staff sign in by text.", out)
         self.assertIsNone(self.row("maria")["password_hash"])
 
     def test_a_door_code_is_four_to_eight_ascii_digits(self):

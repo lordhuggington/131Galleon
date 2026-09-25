@@ -68,6 +68,8 @@ def cmd_create_user(args, conn) -> None:
         # Transitional: staff who haven't got a phone yet. Once they have one, login() refuses a
         # password from them, so a hash kept here could never be used again.
         pw_hash = _checked_hash(args.password)
+    elif args.password:
+        print("Ignored --password: staff sign in by text.")
     try:
         conn.execute(
             """INSERT INTO users (username, display_name, role, label, phone, door_code, password_hash, created_at)
