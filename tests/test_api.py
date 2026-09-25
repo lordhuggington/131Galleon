@@ -579,11 +579,14 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(r.json()["error"], "Meals aren't turned on for you.")
 
     def test_state_hides_the_meal_settings_from_a_gated_staff_member(self):
-        """/api/state must not leak what /api/plans refuses: gated people get the defaults, same shape."""
+        """/api/state must not leak what /api/plans refuses: gated people get the defaults, same shape —
+        except the prep-coverage days, which the Visit screen shows everyone."""
         from app import store
         self.login("owen")
         s = self.c.get("/api/state").json()["settings"]
         s["likes"] = "kimchi-pancakes"
+        s["tue"]["covers"] = "Thu, Fri"
+        s["fri"]["covers"] = "Sat, Sun, Mon"
         self.assertEqual(self.c.put("/api/settings", json=s, headers=H).status_code, 200)
         self.assertEqual(self.c.get("/api/state").json()["settings"]["likes"], "kimchi-pancakes")
         maria = [u for u in self.c.get("/api/users").json()["users"] if u["username"] == "maria"][0]
@@ -591,7 +594,12 @@ class ApiTest(unittest.TestCase):
         self.c.post("/api/logout", headers=H)
         self.login("maria")
         state = self.c.get("/api/state")
-        self.assertEqual(state.json()["settings"], store.default_settings())
+        gated = state.json()["settings"]
+        self.assertEqual(gated["tue"]["covers"], "Thu, Fri")  # the real days, not the hard-coded ones
+        self.assertEqual(gated["fri"]["covers"], "Sat, Sun, Mon")
+        expected = store.default_settings()
+        expected["tue"]["covers"], expected["fri"]["covers"] = "Thu, Fri", "Sat, Sun, Mon"
+        self.assertEqual(gated, expected)  # and nothing else of the household's
         self.assertNotIn("kimchi-pancakes", state.text)
         self.c.post("/api/logout", headers=H)
         self.login("owen")

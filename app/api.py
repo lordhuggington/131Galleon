@@ -264,10 +264,11 @@ def change_my_password(request, conn, user, body):
 @endpoint()
 def state(request, conn, user, _body):
     # Someone who can't see meals gets the default settings, not the household's: same shape for the
-    # page to render, none of the kcal targets, likes, dislikes or pantry.
+    # page to render, none of the kcal targets, likes, dislikes or pantry. The prep-coverage days are
+    # the exception — the Visit screen shows those to everyone, so they must be the real ones.
     me = me_dict(user)
     return {"me": me, "tasks": store.list_tasks(conn), "visits": store.list_visits(conn),
-            "settings": store.get_settings(conn) if me["canSeeMeals"] else store.default_settings()}
+            "settings": store.visible_settings(conn, me["canSeeMeals"])}
 
 
 # ---------- tasks (owner) ----------

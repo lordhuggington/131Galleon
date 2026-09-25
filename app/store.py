@@ -29,6 +29,18 @@ def get_settings(conn: sqlite3.Connection) -> dict:
     return {**out, **s, **sessions}
 
 
+def visible_settings(conn: sqlite3.Connection, can_see_meals: bool) -> dict:
+    """What /api/state may show this person: everything for owners and meals-enabled staff;
+    otherwise the defaults, except the prep-coverage days the Visit screen shows everyone."""
+    settings = get_settings(conn)
+    if can_see_meals:
+        return settings
+    shown = default_settings()
+    for session in ("tue", "fri"):
+        shown[session]["covers"] = settings[session]["covers"]
+    return shown
+
+
 def save_settings(conn: sqlite3.Connection, s: dict) -> None:
     conn.execute("INSERT INTO settings (key, value) VALUES ('meal', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                  (json.dumps(s),))
