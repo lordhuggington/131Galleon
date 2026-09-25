@@ -29,11 +29,11 @@ export function DoorCodeBanner({ code }: { code: string }) {
       type="button"
       className="door-code"
       aria-pressed={hidden}
-      aria-label={hidden ? "Show door code" : "Hide door code"}
       onClick={toggle}
     >
       <span>
         <span aria-hidden="true">🔑</span> Door code
+        <span className="sr-only">{hidden ? " (hidden — press to show)" : " (press to hide)"}</span>
       </span>
       <span className="mono door-code-value">{hidden ? "••••" : code}</span>
     </button>
