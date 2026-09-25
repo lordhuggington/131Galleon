@@ -47,6 +47,8 @@ def migrate(conn: sqlite3.Connection) -> int:
     Each script runs with foreign keys OFF so a table rebuild (DROP + RENAME, see 002) does not
     cascade-delete rows, then PRAGMA foreign_key_check verifies nothing was left dangling.
     PRAGMA foreign_keys is a no-op inside a transaction, so it must be issued here, not in the script.
+    A script that fails part-way leaves its BEGIN open and never reaches its COMMIT, so the error path
+    must ROLLBACK first — otherwise the restoring pragma below would be swallowed by that transaction.
     """
     current = conn.execute("PRAGMA user_version").fetchone()[0]
     files = sorted(MIGRATIONS_DIR.glob("[0-9][0-9][0-9]_*.sql"))
@@ -61,6 +63,10 @@ def migrate(conn: sqlite3.Connection) -> int:
             bad = conn.execute("PRAGMA foreign_key_check").fetchall()
             if bad:
                 raise RuntimeError(f"migration {f.name} left {len(bad)} broken foreign key rows")
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
         finally:
             conn.execute("PRAGMA foreign_keys = ON")
         current = num

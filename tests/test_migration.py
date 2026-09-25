@@ -1,9 +1,11 @@
 """Migration runner and schema migration tests. Run with:  python3 -m unittest discover -s tests"""
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 def apply_001(conn) -> None:
@@ -64,6 +66,29 @@ class MigrationTest(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT done_by FROM task_completions").fetchone()[0], 2)
             self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM visit_photos").fetchone()[0], 0)
+        finally:
+            conn.close()
+
+    def test_a_failing_migration_rolls_back_and_restores_the_pragma(self):
+        """A script that dies part-way leaves its BEGIN open; migrate() must not hand that back."""
+        import app.db as db
+        scripts = Path(self.tmp.name) / "migrations"
+        scripts.mkdir()
+        (scripts / "001_ok.sql").write_text("CREATE TABLE ok (id INTEGER PRIMARY KEY);\n")
+        (scripts / "002_broken.sql").write_text(
+            "CREATE TABLE x (id INTEGER PRIMARY KEY);\nINSERT INTO nope VALUES (1);\n")
+        conn = db.connect(self.path)
+        try:
+            with mock.patch.object(db, "MIGRATIONS_DIR", scripts):
+                with self.assertRaises(sqlite3.OperationalError):
+                    db.migrate(conn)
+            # no open write transaction, enforcement back on, and 002 did not half-apply
+            self.assertFalse(conn.in_transaction)
+            self.assertEqual(conn.execute("PRAGMA foreign_keys").fetchone()[0], 1)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 1)
+            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+            self.assertIn("ok", tables)
+            self.assertNotIn("x", tables)
         finally:
             conn.close()
 
