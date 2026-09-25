@@ -43,10 +43,17 @@ export function HomeScreen() {
   const firstName = me.displayName.split(" ")[0] ?? me.displayName;
   const photoCount = visit?.photos.length ?? 0;
   const visitTitle = visitDate === t0 ? "Today's visit" : `${fmtWeekday(visitDate)}'s visit`;
-  const visitSubtitle = `${readyCount} tasks ready${photoCount ? ` · ${photoCount} photos` : ""}`;
+  const visitSubtitle = `${readyCount} ${readyCount === 1 ? "task" : "tasks"} ready${
+    photoCount ? ` · ${photoCount} ${photoCount === 1 ? "photo" : "photos"}` : ""
+  }`;
   const mealsSubtitle = planLoaded && !plan ? "No menu yet" : "Menu & prep order";
   const shoppingLeft = (plan?.shopping ?? []).filter((i) => !plan?.got?.[i.id]).length;
-  const shoppingSubtitle = planLoaded && !plan ? "No menu yet" : `${shoppingLeft} items left to get`;
+  // Blank until the plan has been fetched once; "0 items left to get" would be a guess.
+  const shoppingSubtitle = !planLoaded
+    ? ""
+    : plan
+      ? `${shoppingLeft} ${shoppingLeft === 1 ? "item" : "items"} left to get`
+      : "No menu yet";
 
   function openVisit(intent: "photo" | "note" | null) {
     dispatch({ type: "date", date: visitDate });
