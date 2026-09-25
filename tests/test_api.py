@@ -493,6 +493,18 @@ class ApiTest(unittest.TestCase):
         row = [x for x in self.c.get("/api/users").json()["users"] if x["id"] == me["id"]][0]
         self.assertFalse(row["canSeeMeals"])
 
+    def test_meals_can_be_turned_off_for_a_staff_member(self):
+        self.login("owen")
+        maria = [u for u in self.c.get("/api/users").json()["users"] if u["username"] == "maria"][0]
+        self.c.patch(f"/api/users/{maria['id']}", json={"canSeeMeals": False}, headers=H)
+        self.assertEqual(self.c.get("/api/plans/2026-09-28").status_code, 200)  # owners are never gated
+        self.c.post("/api/logout", headers=H)
+        mine = self.login("maria")
+        self.assertFalse(mine["canSeeMeals"])
+        r = self.c.get("/api/plans/2026-09-28")
+        self.assertEqual(r.status_code, 403)
+        self.assertEqual(r.json()["error"], "Meals aren't turned on for you.")
+
     # ---- AI generation (Claude API mocked) ----
     def test_generate_menu(self):
         self.login("owen")

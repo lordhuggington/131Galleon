@@ -380,6 +380,8 @@ def put_settings(request, conn, user, body):
 # ---------- meal plans ----------
 @endpoint()
 def get_plan(request, conn, user, _body):
+    if user["role"] != "owner" and not user["can_see_meals"]:
+        raise ApiError(403, "Meals aren't turned on for you.")
     return {"plan": store.get_plan(conn, path_week(request), include_shopping=user["role"] == "owner")}
 
 
