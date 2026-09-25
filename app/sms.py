@@ -32,8 +32,12 @@ def _post(path: str, data: dict, transport: httpx.BaseTransport | None) -> httpx
 
 
 def _twilio_code(resp: httpx.Response) -> int | None:
+    """Twilio's numeric error code, or None when the body isn't a JSON object carrying one."""
     try:
-        v = resp.json().get("code")
+        payload = resp.json()
+        if not isinstance(payload, dict):
+            return None  # valid JSON that isn't an object: .get() would be an AttributeError
+        v = payload.get("code")
     except ValueError:
         return None
     return v if isinstance(v, int) else None
@@ -66,7 +70,12 @@ def check_verification(phone: str, code: str, transport: httpx.BaseTransport | N
         raise SmsError("Couldn't check the code. Try again.")
     if resp.status_code == 200:
         try:
-            return resp.json().get("status") == "approved"
+            payload = resp.json()
+            if not isinstance(payload, dict):
+                # A JSON list or string would make .get() an AttributeError, which would escape the
+                # SmsError contract and turn a public route into a 500.
+                raise SmsError("Couldn't check the code. Try again.")
+            return payload.get("status") == "approved"
         except ValueError:
             raise SmsError("Couldn't check the code. Try again.")
     if resp.status_code == 404 or _twilio_code(resp) == 20404:

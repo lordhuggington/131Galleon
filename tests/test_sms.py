@@ -102,6 +102,22 @@ class SmsCheckTest(SmsTestBase):
         self.assertEqual(str(cm.exception), "Couldn't check the code. Try again.")
 
 
+class SmsNonObjectBodyTest(SmsTestBase):
+    """A JSON body that isn't an object must stay an SmsError: an AttributeError would 500 a public route."""
+
+    def test_start_raises_sms_error(self):
+        from app import sms
+        with self.assertRaises(sms.SmsError) as cm:
+            sms.start_verification("+13105551234", transport=self.transport(200, [{"status": "pending"}]))
+        self.assertEqual(str(cm.exception), "Couldn't send the text message. Try again in a minute.")
+
+    def test_check_raises_sms_error(self):
+        from app import sms
+        with self.assertRaises(sms.SmsError) as cm:
+            sms.check_verification("+13105551234", "123456", transport=self.transport(200, ["approved"]))
+        self.assertEqual(str(cm.exception), "Couldn't check the code. Try again.")
+
+
 class SmsLoggingTest(SmsTestBase):
     def test_warning_hides_the_subscriber_digits(self):
         from app import sms
