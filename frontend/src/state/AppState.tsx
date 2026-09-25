@@ -275,34 +275,55 @@ export function useSettings(): Settings {
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(reduce, undefined, initialAppData);
+  const [state, rawDispatch] = useReducer(reduce, undefined, initialAppData);
   const { toast } = useToast();
   // Effects and callbacks read the latest state without re-subscribing.
   const stateRef = useRef(state);
   stateRef.current = state;
   // Server data is only re-applied when its JSON signature changed (v1's lastSig trick).
   const lastSig = useRef("");
-  // Session identity, bumped at dispatch time rather than read from render: stateRef lags a
-  // render, and an in-flight refresh must never resurrect the data of a signed-out session.
+  // Session identity for in-flight requests: a ref, not render state, because stateRef lags a
+  // render and an await must never resurrect the data of a session that has since ended. The
+  // dispatch wrapper below is the one place transitions are recorded, so no caller can forget
+  // to bump it -- including screens that dispatch "booted" through the context directly.
   const session = useRef({ epoch: 0, signedIn: false });
+
+  /** Context dispatch: records session transitions, then forwards to the reducer. */
+  const dispatch = useCallback((action: Action) => {
+    switch (action.type) {
+      case "booted":
+        session.current = { epoch: session.current.epoch + 1, signedIn: action.me !== null };
+        break;
+      case "signed-in":
+        session.current = { epoch: session.current.epoch + 1, signedIn: true };
+        break;
+      case "signed-out":
+        session.current = { epoch: session.current.epoch + 1, signedIn: false };
+        break;
+    }
+    rawDispatch(action);
+  }, []);
 
   useEffect(() => {
     setUnauthorizedHandler(() => {
-      session.current.epoch += 1;
-      session.current.signedIn = false;
       lastSig.current = "";
       dispatch({ type: "signed-out" });
     });
-  }, []);
+  }, [dispatch]);
 
-  const loadPlan = useCallback(async (week: string) => {
-    try {
-      const { plan } = await api<PlanResponse>("GET", `/api/plans/${week}`);
-      dispatch({ type: "plan", week, plan });
-    } catch (e) {
-      if (!(e instanceof ApiError && e.status === 401)) console.warn(e);
-    }
-  }, []);
+  const loadPlan = useCallback(
+    async (week: string) => {
+      const started = session.current.epoch;
+      try {
+        const { plan } = await api<PlanResponse>("GET", `/api/plans/${week}`);
+        if (session.current.epoch !== started) return;
+        dispatch({ type: "plan", week, plan });
+      } catch (e) {
+        if (!(e instanceof ApiError && e.status === 401)) console.warn(e);
+      }
+    },
+    [dispatch],
+  );
 
   const refresh = useCallback(async () => {
     if (!session.current.signedIn) return;
@@ -339,7 +360,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // A 401 already signed us out via the client's unauthorized handler.
       if (!(e instanceof ApiError && e.status === 401)) console.warn(e);
     }
-  }, []);
+  }, [dispatch]);
 
   const mutate = useCallback(
     async (
@@ -370,28 +391,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (stateRef.current.planLoaded[week]) return;
       await loadPlan(week);
     },
-    [loadPlan],
+    [dispatch, loadPlan],
   );
 
-  const goToTab = useCallback((tab: Tab, intent: Intent = null) => {
-    dispatch({ type: "tab", tab, intent });
-    window.scrollTo(0, 0);
-  }, []);
+  const goToTab = useCallback(
+    (tab: Tab, intent: Intent = null) => {
+      dispatch({ type: "tab", tab, intent });
+      window.scrollTo(0, 0);
+    },
+    [dispatch],
+  );
 
   // No refresh() here: usePolling's scope effect fires on the sign-in transition
   // and does the first load, so calling it here would fetch twice.
-  const signIn = useCallback(async (me: Me) => {
-    session.current.epoch += 1;
-    session.current.signedIn = true;
-    lastSig.current = "";
-    dispatch({ type: "signed-in", me });
-  }, []);
+  const signIn = useCallback(
+    async (me: Me) => {
+      lastSig.current = "";
+      dispatch({ type: "signed-in", me });
+    },
+    [dispatch],
+  );
 
   const signOut = useCallback(async () => {
-    // Bumped before the request, not after: the tap must invalidate any in-flight refresh
-    // immediately, even if /api/state answers while the logout is still on the wire.
-    session.current.epoch += 1;
-    session.current.signedIn = false;
     try {
       await api<unknown>("POST", "/api/logout");
     } catch {
@@ -399,7 +420,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     lastSig.current = "";
     dispatch({ type: "signed-out" });
-  }, []);
+  }, [dispatch]);
 
   const value = useMemo<AppContextValue>(
     () => ({ state, dispatch, refresh, mutate, loadPlan, showWeek, goToTab, signIn, signOut }),
