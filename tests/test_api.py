@@ -11,12 +11,15 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 H = {"x-hrs": "1"}
+JPEG = b"\xff\xd8\xff" + b"\x00" * 200  # only the magic bytes are checked server-side
+PHOTO_HEADERS = {**H, "content-type": "image/jpeg"}
 
 
 class ApiTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         os.environ["HRS_DB_PATH"] = str(Path(self.tmp.name) / "test.db")
+        os.environ["HRS_PHOTOS_DIR"] = str(Path(self.tmp.name) / "photos")
         os.environ["HRS_COOKIE_SECURE"] = "0"
         os.environ["ANTHROPIC_API_KEY"] = "test-key"
         os.environ["TWILIO_ACCOUNT_SID"] = "AC123"
@@ -504,6 +507,84 @@ class ApiTest(unittest.TestCase):
         r = self.c.get("/api/plans/2026-09-28")
         self.assertEqual(r.status_code, 403)
         self.assertEqual(r.json()["error"], "Meals aren't turned on for you.")
+
+    # ---- photos ----
+    def test_upload_photo_appears_in_state(self):
+        self.login("maria")
+        r = self.c.post("/api/visits/2026-09-29/photos?kind=fix&caption=Tap%20drips", content=JPEG, headers=PHOTO_HEADERS)
+        self.assertEqual(r.status_code, 200, r.text)
+        photo = r.json()["photo"]
+        self.assertEqual(photo["kind"], "fix")
+        self.assertEqual(photo["caption"], "Tap drips")
+        self.assertEqual(photo["by"]["displayName"], "Maria")
+        self.assertRegex(photo["url"], r"^/photos/[0-9a-f]{32}\.jpg$")
+        stored = Path(os.environ["HRS_PHOTOS_DIR"]) / photo["url"].split("/")[-1]
+        self.assertEqual(stored.read_bytes(), JPEG)
+        visit = self.c.get("/api/state").json()["visits"]["2026-09-29"]
+        self.assertEqual(len(visit["photos"]), 1)
+        self.assertEqual(visit["photos"][0]["id"], photo["id"])
+        got = self.c.get(photo["url"])
+        self.assertEqual(got.status_code, 200)
+        self.assertEqual(got.content, JPEG)
+        self.assertEqual(got.headers["cache-control"], "private, max-age=604800, immutable")
+
+    def test_photo_upload_validation(self):
+        self.login("maria")
+        r = self.c.post("/api/visits/2026-09-29/photos?kind=done", content=b"GIF89a-not-a-jpeg", headers=PHOTO_HEADERS)
+        self.assertEqual(r.status_code, 415)
+        self.assertEqual(r.json()["error"], "Only JPEG photos are accepted.")
+        big = b"\xff\xd8\xff" + b"\x00" * (8 * 1024 * 1024)
+        r = self.c.post("/api/visits/2026-09-29/photos?kind=done", content=big, headers=PHOTO_HEADERS)
+        self.assertEqual(r.status_code, 413)
+        self.assertEqual(r.json()["error"], "That photo is too large.")
+        r = self.c.post("/api/visits/2026-09-29/photos?kind=sideways", content=JPEG, headers=PHOTO_HEADERS)
+        self.assertEqual(r.status_code, 400)
+        r = self.c.post("/api/visits/2026-09-29/photos?kind=done&caption=" + "x" * 301, content=JPEG, headers=PHOTO_HEADERS)
+        self.assertEqual(r.status_code, 400)
+        r = self.c.post("/api/visits/2026-09-29/photos?kind=done", content=JPEG, headers={"content-type": "image/jpeg"})
+        self.assertEqual(r.status_code, 403)  # no X-HRS header
+
+    def test_photos_require_a_session(self):
+        self.assertEqual(self.c.get("/photos/" + "a" * 32 + ".jpg").status_code, 401)
+        r = self.c.post("/api/visits/2026-09-29/photos?kind=done", content=JPEG, headers=PHOTO_HEADERS)
+        self.assertEqual(r.status_code, 401)
+        self.login("maria")
+        self.assertEqual(self.c.get("/photos/not-a-real-name.jpg").status_code, 404)
+        self.assertEqual(self.c.get("/photos/" + "a" * 32 + ".jpg").status_code, 404)
+
+    def test_a_row_without_its_file_is_a_404(self):
+        self.login("maria")
+        photo = self.c.post("/api/visits/2026-09-29/photos?kind=done", content=JPEG, headers=PHOTO_HEADERS).json()["photo"]
+        (Path(os.environ["HRS_PHOTOS_DIR"]) / photo["url"].split("/")[-1]).unlink()
+        r = self.c.get(photo["url"])
+        self.assertEqual(r.status_code, 404)
+        self.assertEqual(r.json()["error"], "That photo doesn't exist.")
+
+    def test_photo_ids_and_dates_are_checked(self):
+        self.login("maria")
+        self.assertEqual(self.c.delete("/api/visits/2026-09-29/photos/not-a-number", headers=H).status_code, 404)
+        r = self.c.post("/api/visits/2026-13-01/photos?kind=done", content=JPEG, headers=PHOTO_HEADERS)
+        self.assertEqual(r.status_code, 400)
+
+    def test_only_the_uploader_or_an_owner_deletes_a_photo(self):
+        self.login("owen")
+        mine = self.c.post("/api/visits/2026-09-29/photos?kind=done", content=JPEG, headers=PHOTO_HEADERS).json()["photo"]
+        self.c.post("/api/logout", headers=H)
+        self.login("maria")
+        r = self.c.delete(f"/api/visits/2026-09-29/photos/{mine['id']}", headers=H)
+        self.assertEqual(r.status_code, 403)
+        self.assertEqual(r.json()["error"], "You can only delete your own photos.")
+        theirs = self.c.post("/api/visits/2026-09-29/photos?kind=fix", content=JPEG, headers=PHOTO_HEADERS).json()["photo"]
+        self.assertEqual(self.c.delete(f"/api/visits/2026-09-29/photos/{theirs['id']}", headers=H).status_code, 200)
+        self.c.post("/api/logout", headers=H)
+        self.login("owen")
+        # an owner can delete anyone's, and the file goes with the row
+        path = Path(os.environ["HRS_PHOTOS_DIR"]) / mine["url"].split("/")[-1]
+        self.assertTrue(path.is_file())
+        self.assertEqual(self.c.delete(f"/api/visits/2026-09-29/photos/{mine['id']}", headers=H).status_code, 200)
+        self.assertFalse(path.is_file())
+        self.assertEqual(self.c.delete(f"/api/visits/2026-09-29/photos/{mine['id']}", headers=H).status_code, 404)
+        self.assertEqual(self.c.get("/api/state").json()["visits"].get("2026-09-29", {}).get("photos", []), [])
 
     # ---- AI generation (Claude API mocked) ----
     def test_generate_menu(self):

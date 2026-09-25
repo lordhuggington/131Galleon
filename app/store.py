@@ -62,7 +62,7 @@ def list_visits(conn: sqlite3.Connection, days_back: int = 400) -> dict:
     visits: dict[str, dict] = {}
 
     def v(d: str) -> dict:
-        return visits.setdefault(d, {"date": d, "note": "", "done": {}, "extras": {}})
+        return visits.setdefault(d, {"date": d, "note": "", "done": {}, "extras": {}, "photos": []})
 
     for r in conn.execute("SELECT date, note FROM visits WHERE date >= ?", (since,)):
         v(r["date"])["note"] = r["note"]
@@ -71,6 +71,12 @@ def list_visits(conn: sqlite3.Connection, days_back: int = 400) -> dict:
     for r in conn.execute("SELECT * FROM visit_extras WHERE visit_date >= ? ORDER BY created_at", (since,)):
         v(r["visit_date"])["extras"][str(r["id"])] = {
             "title": r["title"], "notes": r["notes"], "done": r["done_at"] is not None, "createdAt": r["created_at"]}
+    for r in conn.execute("""SELECT p.*, u.display_name FROM visit_photos p
+                             LEFT JOIN users u ON u.id = p.created_by
+                             WHERE p.visit_date >= ? ORDER BY p.created_at, p.id""", (since,)):
+        v(r["visit_date"])["photos"].append(
+            {"id": r["id"], "kind": r["kind"], "caption": r["caption"], "url": f"/photos/{r['filename']}",
+             "createdAt": r["created_at"], "by": {"id": r["created_by"], "displayName": r["display_name"] or ""}})
     return visits
 
 

@@ -5,11 +5,12 @@ import json
 import re
 import secrets
 from datetime import date
+from pathlib import Path
 from typing import Any, Callable
 
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Route
 
 from . import ai, sms, store
@@ -27,6 +28,10 @@ FREQS = ("visit", "weekly", "fortnightly", "monthly")
 DAYS = ("any", "tue", "fri")
 SESSIONS = ("tue", "fri")
 SLOTS = ("breakfast", "main", "dessert")
+PHOTO_KINDS = ("done", "fix")
+PHOTO_MAX_BYTES = 8 * 1024 * 1024
+PHOTO_NAME_RE = re.compile(r"^[0-9a-f]{32}\.jpg$")
+JPEG_MAGIC = b"\xff\xd8\xff"
 _DUMMY_HASH = hash_password(secrets.token_hex(16))  # equalises login timing for unknown usernames
 
 
@@ -40,14 +45,19 @@ def err(status: int, message: str) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=status)
 
 
-def endpoint(role: str | None = None, public: bool = False):
-    """Wrap a sync handler(request, conn, user, body) with auth, CSRF header check, JSON parsing and errors."""
+def endpoint(role: str | None = None, public: bool = False, raw_body: bool = False):
+    """Wrap a sync handler(request, conn, user, body) with auth, CSRF header check, JSON parsing and errors.
+
+    raw_body=True skips JSON parsing and passes the request body straight through as bytes (photo uploads).
+    """
     def deco(fn: Callable[..., Any]):
         async def handler(request: Request) -> Response:
             if request.method not in ("GET", "HEAD") and request.headers.get("x-hrs") != "1":
                 return err(403, "Missing X-HRS request header.")
-            body: dict = {}
-            if request.method in ("POST", "PUT", "PATCH"):
+            body: Any = b"" if raw_body else {}
+            if raw_body:
+                body = await request.body()
+            elif request.method in ("POST", "PUT", "PATCH"):
                 raw = await request.body()
                 if raw:
                     try:
@@ -361,6 +371,73 @@ def delete_extra(request, conn, user, _body):
     return {"ok": True}
 
 
+# ---------- photos ----------
+def _photos_dir() -> Path:
+    return Path(get_config().photos_dir)
+
+
+def _photo_dict(r, display_name: str) -> dict:
+    return {"id": r["id"], "kind": r["kind"], "caption": r["caption"], "url": f"/photos/{r['filename']}",
+            "createdAt": r["created_at"], "by": {"id": r["created_by"], "displayName": display_name}}
+
+
+@endpoint(raw_body=True)
+def add_photo(request, conn, user, body):
+    d = path_date(request)
+    kind = request.query_params.get("kind", "done")
+    if kind not in PHOTO_KINDS:
+        raise ApiError(400, f"'kind' must be one of: {', '.join(PHOTO_KINDS)}.")
+    caption = (request.query_params.get("caption") or "").strip()
+    if len(caption) > 300:
+        raise ApiError(400, "'caption' is too long (max 300 characters).")
+    if len(body) > PHOTO_MAX_BYTES:
+        raise ApiError(413, "That photo is too large.")
+    if not body.startswith(JPEG_MAGIC):
+        raise ApiError(415, "Only JPEG photos are accepted.")
+    filename = secrets.token_hex(16) + ".jpg"  # never derived from user input
+    directory = _photos_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / filename).write_bytes(body)
+    cur = conn.execute(
+        """INSERT INTO visit_photos (visit_date, kind, caption, filename, bytes, created_at, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""", (d, kind, caption, filename, len(body), now_iso(), user["id"]))
+    row = conn.execute("SELECT * FROM visit_photos WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return {"photo": _photo_dict(row, user["display_name"])}
+
+
+@endpoint()
+def get_photo(request, conn, user, _body):
+    """Served from outside /api/ so the no-store header doesn't apply; still needs the session cookie."""
+    name = request.path_params["filename"]
+    missing = ApiError(404, "That photo doesn't exist.")
+    if not PHOTO_NAME_RE.match(name):
+        raise missing
+    if not conn.execute("SELECT 1 FROM visit_photos WHERE filename = ?", (name,)).fetchone():
+        raise missing
+    path = _photos_dir() / name
+    if not path.is_file():
+        raise missing
+    return FileResponse(path, media_type="image/jpeg",
+                        headers={"Cache-Control": "private, max-age=604800, immutable"})
+
+
+@endpoint()
+def delete_photo(request, conn, user, _body):
+    d = path_date(request)
+    try:
+        pid = int(request.path_params["photo_id"])
+    except ValueError:
+        raise ApiError(404, "That photo doesn't exist.")
+    row = conn.execute("SELECT * FROM visit_photos WHERE id = ? AND visit_date = ?", (pid, d)).fetchone()
+    if not row:
+        raise ApiError(404, "That photo doesn't exist.")
+    if user["role"] != "owner" and row["created_by"] != user["id"]:
+        raise ApiError(403, "You can only delete your own photos.")
+    conn.execute("DELETE FROM visit_photos WHERE id = ?", (pid,))
+    (_photos_dir() / row["filename"]).unlink(missing_ok=True)
+    return {"ok": True}
+
+
 # ---------- settings ----------
 @endpoint(role="owner")
 def put_settings(request, conn, user, body):
@@ -594,6 +671,8 @@ routes = [
     Route("/api/visits/{date}/extras", add_extra, methods=["POST"]),
     Route("/api/visits/{date}/extras/{extra_id}", set_extra_done, methods=["PATCH"]),
     Route("/api/visits/{date}/extras/{extra_id}", delete_extra, methods=["DELETE"]),
+    Route("/api/visits/{date}/photos", add_photo, methods=["POST"]),
+    Route("/api/visits/{date}/photos/{photo_id}", delete_photo, methods=["DELETE"]),
     Route("/api/settings", put_settings, methods=["PUT"]),
     Route("/api/plans/{week}", get_plan),
     Route("/api/plans/{week}", delete_plan, methods=["DELETE"]),
@@ -605,4 +684,5 @@ routes = [
     Route("/api/users", list_users),
     Route("/api/users", create_user, methods=["POST"]),
     Route("/api/users/{user_id}", update_user, methods=["PATCH"]),
+    Route("/photos/{filename}", get_photo),
 ]
