@@ -23,6 +23,9 @@ export function VisitNote({
   // The saved value, read inside timers without re-arming them.
   const saved = useRef(note);
   saved.current = note;
+  // Read by the unmount cleanup so a tab switch mid-typing saves instead of dropping the draft.
+  const flush = useRef(() => {});
+  flush.current = () => save(draft);
 
   // A poll must never overwrite what someone is typing (spec §7.2).
   useEffect(() => {
@@ -34,7 +37,13 @@ export function VisitNote({
     if (focusOnMount) box.current?.focus();
   }, [focusOnMount]);
 
-  useEffect(() => () => window.clearTimeout(timer.current), []);
+  useEffect(
+    () => () => {
+      window.clearTimeout(timer.current);
+      flush.current();
+    },
+    [],
+  );
 
   function save(value: string) {
     window.clearTimeout(timer.current);

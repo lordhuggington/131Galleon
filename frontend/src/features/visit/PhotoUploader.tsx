@@ -39,8 +39,9 @@ export function PhotoUploader({ date, onDone }: { date: string; onDone: () => vo
     let sent = 0;
     let undecodable = 0;
     const finish = async (): Promise<void> => {
-      setProgress("");
+      // Progress stays up through the resync so the panel is never silent with Upload disabled.
       await refresh();
+      setProgress("");
       if (sent > 0) toast(sent === 1 ? "Photo added" : `${sent} photos added`);
     };
     for (const [index, file] of chosen.entries()) {
