@@ -1,0 +1,110 @@
+"""Admin command tests. Run with:  python3 -m unittest discover -s tests"""
+from __future__ import annotations
+
+import os
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+
+class CliTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        os.environ["HRS_DB_PATH"] = str(Path(self.tmp.name) / "cli.db")
+        from app import cli
+        self.cli = cli
+        cli.main(["create-user", "--username", "owen", "--name", "Owen", "--role", "owner", "--password", "owner-pass"])
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def row(self, username: str):
+        from app.db import connect
+        conn = connect()
+        try:
+            return conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+        finally:
+            conn.close()
+
+    def test_create_staff_without_a_password(self):
+        self.cli.main(["create-user", "--username", "maria", "--name", "Maria", "--role", "staff",
+                       "--label", "Housekeeper", "--door-code", "4821", "--phone", "(310) 555-1234"])
+        r = self.row("maria")
+        self.assertEqual(r["role"], "staff")
+        self.assertEqual(r["label"], "Housekeeper")
+        self.assertEqual(r["door_code"], "4821")
+        self.assertEqual(r["phone"], "+13105551234")
+        self.assertIsNone(r["password_hash"])
+
+    def test_set_phone_clears_the_password_and_sessions(self):
+        from app.auth import create_session
+        from app.db import connect
+        self.cli.main(["create-user", "--username", "maria", "--name", "Maria", "--role", "staff",
+                       "--password", "staff-pass"])
+        conn = connect()
+        try:
+            create_session(conn, self.row("maria")["id"])
+        finally:
+            conn.close()
+        self.cli.main(["set-phone", "--username", "maria", "--phone", "310 555 1234"])
+        r = self.row("maria")
+        self.assertEqual(r["phone"], "+13105551234")
+        self.assertIsNone(r["password_hash"])
+        conn = connect()
+        try:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM sessions WHERE user_id = ?", (r["id"],)).fetchone()[0], 0)
+        finally:
+            conn.close()
+        with self.assertRaises(SystemExit):
+            self.cli.main(["set-phone", "--username", "maria", "--phone", "nonsense"])
+        with self.assertRaises(SystemExit):  # owen would collide with maria's number
+            self.cli.main(["set-phone", "--username", "owen", "--phone", "+13105551234"])
+
+    def test_set_password_is_owners_only(self):
+        self.cli.main(["create-user", "--username", "maria", "--name", "Maria", "--role", "staff"])
+        with self.assertRaises(SystemExit):
+            self.cli.main(["set-password", "--username", "maria", "--password", "long-enough-pw"])
+        self.cli.main(["set-password", "--username", "owen", "--password", "another-long-pw"])
+        from app.auth import verify_password
+        self.assertTrue(verify_password("another-long-pw", self.row("owen")["password_hash"]))
+
+    def test_only_owners_are_prompted_for_a_password(self):
+        with mock.patch("getpass.getpass", return_value="prompted-password") as asked:
+            self.cli.main(["create-user", "--username", "kate", "--name", "Kate", "--role", "owner"])
+            self.assertTrue(asked.called)
+            asked.reset_mock()
+            self.cli.main(["create-user", "--username", "maria", "--name", "Maria", "--role", "staff"])
+            self.assertFalse(asked.called)  # staff sign in by text; there is nothing to ask for
+        from app.auth import verify_password
+        self.assertTrue(verify_password("prompted-password", self.row("kate")["password_hash"]))
+        self.assertIsNone(self.row("maria")["password_hash"])
+
+    def test_staff_who_have_a_phone_keep_no_password_hash(self):
+        # login() refuses a password from staff who have a phone, so storing one would leave an
+        # unusable credential behind; /api/users drops it the same way.
+        self.cli.main(["create-user", "--username", "maria", "--name", "Maria", "--role", "staff",
+                       "--phone", "310 555 1234", "--password", "staff-pass"])
+        self.assertIsNone(self.row("maria")["password_hash"])
+
+    def test_a_door_code_is_four_to_eight_ascii_digits(self):
+        for bad in ("123", "123456789", "48a1", "٤٨٢١"):  # the last is Arabic-Indic: a keypad has no such key
+            with self.subTest(code=bad):
+                with self.assertRaises(SystemExit) as caught:
+                    self.cli.main(["create-user", "--username", "dana", "--name", "Dana", "--role", "staff",
+                                   "--door-code", bad])
+                self.assertEqual(str(caught.exception), "A door code is 4 to 8 digits.")
+                self.assertIsNone(self.row("dana"))
+
+    def test_a_duplicate_phone_is_refused_without_echoing_the_number(self):
+        self.cli.main(["create-user", "--username", "maria", "--name", "Maria", "--role", "staff",
+                       "--phone", "310 555 1234"])
+        with self.assertRaises(SystemExit) as caught:
+            self.cli.main(["create-user", "--username", "dana", "--name", "Dana", "--role", "staff",
+                           "--phone", "(310) 555-1234"])
+        self.assertNotIn("3105551234", str(caught.exception))
+        self.assertIsNone(self.row("dana"))
+
+
+if __name__ == "__main__":
+    unittest.main()
