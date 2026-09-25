@@ -63,7 +63,7 @@ export function GenPanel({
       {gen.status || gen.error ? (
         <div className="gen-status mt10">
           {gen.error ? (
-            <div className="notice warn">{gen.error}</div>
+            <div className="notice warn" role="alert">{gen.error}</div>
           ) : (
             <>
               <div className={gen.running ? "muted" : ""}>{gen.status}</div>

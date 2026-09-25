@@ -85,7 +85,12 @@ function Shell() {
   }, [me, tab]);
 
   if (!state.booted) return <div className="empty">Loading your run sheet…</div>;
-  if (!me) return <LoginScreen smsEnabled={smsEnabled} />;
+  if (!me)
+    return (
+      <main className="app">
+        <LoginScreen smsEnabled={smsEnabled} />
+      </main>
+    );
 
   const isOwner = me.role === "owner";
   const canSeeMeals = isOwner || me.canSeeMeals;

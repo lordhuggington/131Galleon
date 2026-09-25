@@ -19,12 +19,12 @@ export function ExtraRow({
   function toggle() {
     const next = !extra.done;
     dispatch({ type: "toggle-extra", date, extraId, done: next });
-    void mutate("PATCH", `/api/visits/${date}/extras/${extraId}`, { done: next }).catch(() => {});
+    void mutate("PATCH", `/api/visits/${date}/extras/${encodeURIComponent(extraId)}`, { done: next }).catch(() => {});
   }
 
   function remove() {
     dispatch({ type: "remove-extra", date, extraId });
-    void mutate("DELETE", `/api/visits/${date}/extras/${extraId}`).catch(() => {});
+    void mutate("DELETE", `/api/visits/${date}/extras/${encodeURIComponent(extraId)}`).catch(() => {});
   }
 
   return (

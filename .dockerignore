@@ -10,3 +10,4 @@ frontend/node_modules
 static
 .superpowers
 docs
+frontend/tsconfig.tsbuildinfo

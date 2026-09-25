@@ -13,6 +13,7 @@
   --orange-soft: #FBDCC8;
   --rust: #B14A2E;        /* headings inside cards, danger */
   --rust-soft: #F8DCD0;
+  /* --sun, --sand, --sky and --sunset are also hard-coded inside components/illustrations/*.tsx (spec Appendix A); change both. */
   --sun: #FFE8B0;
   --sand: #E9C89B;
   --sky: #9AD4D6;

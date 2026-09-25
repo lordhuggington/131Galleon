@@ -130,6 +130,9 @@ git pull && docker compose build && docker compose --profile tunnel up -d
 
 Schema migrations in `migrations/` run automatically on start-up.
 
+If you run the app without Docker, rebuild the frontend after pulling: `cd frontend && npm ci && npm run build`.
+The built files land in `static/`, which is not in git.
+
 After upgrading to v2, add a phone number for each person straight away (**Setup → People**). Staff can keep
 using their old password only until they have one.
 
