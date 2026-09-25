@@ -26,7 +26,7 @@ Everything that works today (task due logic, polling, optimistic ticks, menu gen
 | Home layout | **Action tiles** (see §5.1), not the "postcard feed" variant. |
 | Navigation | Bottom tab bar on all screen sizes, replacing top tabs. |
 | Build/deploy | Multi-stage Dockerfile (node build stage → python stage). Built files are not committed. |
-| Auth | Twilio **Verify** (not hand-rolled OTP). SMS for everyone; password fallback for owners only. |
+| Auth | Twilio **Verify** (not hand-rolled OTP). SMS for everyone with a phone on file; password fallback for owners, and for staff with no phone (§6.4, §6.5). |
 | People model | Two base types `owner` / `staff`, free-text `label`, per-user `can_see_meals`. Not a permissions table, not a fixed role list. |
 | Photos | Simple attachments per visit with kind + caption. No follow-up/resolution tracking. Client-side resize to JPEG; raw-body upload (no multipart parser dependency). |
 | Door codes | Manual: owner types each person's code; app displays it. No lock integration (HomeKit is a future idea). |
@@ -358,7 +358,7 @@ New: `GET /api/login/options`, `POST /api/login/sms/start`, `POST /api/login/sms
 Changed:
 - `POST /api/login` — owner/no-phone rule (§6.4). `PUT /api/me/password` — staff refused.
 - `GET /api/plans/{week}` — 403 "Meals aren't turned on for you." for staff with `can_see_meals = 0`. `include_shopping` still owner-only.
-- `GET /api/users` / `POST /api/users` / `PATCH /api/users/{id}` — new fields `label`, `phone`, `doorCode`, `canSeeMeals`; `role` values `owner|staff`; `username` optional on create (derived); `password` required on create only for owners; `phone` must be unique (409 "That phone number is already used by {name}."); setting a staff member's phone clears their `password_hash` and signs them out everywhere; owners cannot remove their own owner access (as today); `PATCH` with `password` is refused for staff (400).
+- `GET /api/users` / `POST /api/users` / `PATCH /api/users/{id}` — new fields `label`, `phone`, `doorCode`, `canSeeMeals`; `role` values `owner|staff`; `username` optional on create (derived); `password` required on create only for owners; `phone` must be unique (409 "That phone number is already used by {name}."); setting a staff member's phone clears their `password_hash` and signs them out everywhere; owners cannot remove their own owner access (as today); `POST` with `password` for staff who have a `phone` is refused (400 "They sign in by text, so they don't need a password."); `PATCH` with `password` is refused for staff (400); promoting someone with no `password_hash` to owner needs a `password` in the same `PATCH` (400 "Give them a password when you make them an owner.").
 - `me` objects everywhere gain `label`, `phone`, `doorCode`, `canSeeMeals`.
 - `/api/state` `visits[date].photos` added.
 - All `role="homeowner"` guards → `role="owner"`.

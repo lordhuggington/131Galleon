@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest import mock
 
 
-ENV_KEYS = ("HRS_DB_PATH",)  # set here; restored in tearDown so the suite stays order-independent
+ENV_KEYS = ("HRS_DB_PATH", "HRS_PHOTOS_DIR")  # set here; restored in tearDown so the suite stays order-independent
 
 
 class CliTest(unittest.TestCase):
@@ -18,6 +18,8 @@ class CliTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.saved_env = {k: os.environ.get(k) for k in ENV_KEYS}
         os.environ["HRS_DB_PATH"] = str(Path(self.tmp.name) / "cli.db")
+        # password_login boots the real app, whose lifespan creates the photos dir — keep it in the temp dir.
+        os.environ["HRS_PHOTOS_DIR"] = str(Path(self.tmp.name) / "photos")
         from app import cli
         self.cli = cli
         self.run_cli(["create-user", "--username", "owen", "--name", "Owen", "--role", "owner",
