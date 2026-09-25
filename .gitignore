@@ -1,5 +1,6 @@
 .env
 data/
+static/
 backups/
 *.db
 *.db-wal
