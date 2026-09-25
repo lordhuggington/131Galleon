@@ -208,7 +208,18 @@ export function PersonRow({ user }: { user: User }) {
         </form>
       ) : (
         <span className="row">
-          <Button variant="ghost" onClick={() => setEditing(true)}>
+          <Button
+            variant="ghost"
+            onClick={() => {
+              // Drafts are set at mount and rows never remount; re-read the row before editing it.
+              setDisplayName(user.displayName);
+              setLabel(user.label);
+              setPhone(user.phone ?? "");
+              setDoorCode(user.doorCode ?? "");
+              setCanSeeMeals(user.canSeeMeals);
+              setEditing(true);
+            }}
+          >
             Edit
           </Button>
           {user.role === "owner" ? (

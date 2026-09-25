@@ -41,7 +41,8 @@ export function TaskRowEditor({ task }: { task: Task }) {
   }
 
   function commitArea() {
-    const value = area.trim();
+    // Match the server's coercion of a blank area, so the optimistic row doesn't jump groups.
+    const value = area.trim() || "Whole house";
     if (value !== task.area) patch({ area: value });
   }
 
