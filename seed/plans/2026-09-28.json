@@ -1,0 +1,737 @@
+{
+ "got": {},
+ "leftovers": [
+  "About 170 g Greek yogurt",
+  "About 140 g reduced-fat Mexican cheese (keeps 3 weeks once opened)",
+  "About 80 g Parmesan",
+  "2 eggs",
+  "About 100 g protein pasta (pantry)",
+  "About 95 g frozen blueberries (freezer)"
+ ],
+ "note": "",
+ "sessions": {
+  "fri": {
+   "covers": "Sat, Sun, Mon, Tue",
+   "date": "2026-10-02",
+   "recipes": {
+    "breakfast": {
+     "blurb": "Cocoa oats with peanut butter powder and banana.",
+     "fav": false,
+     "ingredients": [
+      {
+       "amount": "160 g (1¾ cups)",
+       "item": "Rolled oats",
+       "kcal": 600,
+       "protein": 20
+      },
+      {
+       "amount": "120 g (4 scoops)",
+       "item": "Vanilla whey protein",
+       "kcal": 480,
+       "protein": 96
+      },
+      {
+       "amount": "680 g (about 2¾ cups)",
+       "item": "Nonfat Greek yogurt",
+       "kcal": 360,
+       "protein": 72.1
+      },
+      {
+       "amount": "580 ml (the rest of the carton)",
+       "item": "Unsweetened almond milk",
+       "kcal": 75,
+       "protein": 2.3
+      },
+      {
+       "amount": "52 g (8 tbsp)",
+       "item": "Peanut butter powder (PB2)",
+       "kcal": 240,
+       "protein": 23.9
+      },
+      {
+       "amount": "20 g (¼ cup)",
+       "item": "Unsweetened cocoa powder",
+       "kcal": 46,
+       "protein": 3.9
+      },
+      {
+       "amount": "2 bananas",
+       "item": "Banana, sliced",
+       "kcal": 178,
+       "protein": 2.2
+      },
+      {
+       "amount": "pinch",
+       "item": "Pinch of salt",
+       "kcal": 0,
+       "protein": 0
+      }
+     ],
+     "portionNote": "4 jars, one per day",
+     "portions": 4,
+     "steps": [
+      "Whisk whey, cocoa and PB2 into the almond milk until smooth.",
+      "Stir in yogurt, oats and salt.",
+      "Divide between 4 jars. Slice the bananas and push the slices into the top of each jar so they're covered (stops browning).",
+      "Lid and refrigerate."
+     ],
+     "storage": "Fridge, up to 4 days.",
+     "title": "Chocolate peanut butter banana overnight oats"
+    },
+    "dessert": {
+     "blurb": "Fudgy oat-flour brownies topped with a thick chocolate peanut butter yogurt frosting.",
+     "fav": false,
+     "ingredients": [
+      {
+       "amount": "60 g (⅔ cup)",
+       "item": "Rolled oats (blended to flour)",
+       "kcal": 225,
+       "protein": 7.5
+      },
+      {
+       "amount": "110 g (about 3½ scoops)",
+       "item": "Vanilla whey protein",
+       "kcal": 440,
+       "protein": 88
+      },
+      {
+       "amount": "50 g (½ cup + 2 tbsp)",
+       "item": "Unsweetened cocoa powder",
+       "kcal": 114,
+       "protein": 9.8
+      },
+      {
+       "amount": "4 large eggs",
+       "item": "Eggs",
+       "kcal": 286,
+       "protein": 25.2
+      },
+      {
+       "amount": "2 bananas",
+       "item": "Ripe bananas, mashed",
+       "kcal": 214,
+       "protein": 2.6
+      },
+      {
+       "amount": "550 g (150 g batter + 400 g frosting)",
+       "item": "Nonfat Greek yogurt",
+       "kcal": 292,
+       "protein": 58.3
+      },
+      {
+       "amount": "2 tbsp",
+       "item": "Maple syrup",
+       "kcal": 78,
+       "protein": 0
+      },
+      {
+       "amount": "40 g (¼ cup)",
+       "item": "Semi-sweet chocolate chips",
+       "kcal": 192,
+       "protein": 2
+      },
+      {
+       "amount": "40 g (6 tbsp)",
+       "item": "Peanut butter powder (PB2)",
+       "kcal": 185,
+       "protein": 18.4
+      },
+      {
+       "amount": "1 tsp baking powder, 1 tsp vanilla, ¼ tsp salt",
+       "item": "Baking powder, vanilla, salt",
+       "kcal": 0,
+       "protein": 0
+      }
+     ],
+     "portionNote": "Cut into 4 large squares, one per day",
+     "portions": 4,
+     "steps": [
+      "Heat oven to 350°F. Line an 8×8 pan with parchment.",
+      "Blend the oats to a fine flour. Whisk with 80 g of the whey, 40 g cocoa, baking powder and salt.",
+      "In another bowl mash the bananas, then whisk in eggs, 150 g yogurt, maple syrup and vanilla.",
+      "Fold wet into dry until just combined, then fold in the chocolate chips. Spread in the pan.",
+      "Bake 20–24 min until the middle is just set. Cool completely in the pan.",
+      "Frosting: whisk 400 g yogurt with the remaining 30 g whey, 10 g cocoa and the PB2 until thick and smooth.",
+      "Cut the brownie into 4 squares, put each in a container and spread a quarter of the frosting on top."
+     ],
+     "storage": "Fridge, up to 5 days. Best eaten cold.",
+     "title": "Banana protein brownies with chocolate PB frosting"
+    },
+    "main": {
+     "blurb": "Lean turkey ragù with carrots, blended cottage cheese and Parmesan over protein penne.",
+     "fav": false,
+     "ingredients": [
+      {
+       "amount": "4 × 1 lb packs",
+       "item": "99% lean ground turkey breast",
+       "kcal": 1926,
+       "protein": 417.6
+      },
+      {
+       "amount": "720 g (from 2 boxes)",
+       "item": "Barilla Protein+ penne (dry)",
+       "kcal": 2441,
+       "protein": 128.9
+      },
+      {
+       "amount": "2 × 24 oz jars",
+       "item": "Marinara sauce",
+       "kcal": 762,
+       "protein": 21.8
+      },
+      {
+       "amount": "2 onions",
+       "item": "Yellow onions, diced",
+       "kcal": 120,
+       "protein": 3.3
+      },
+      {
+       "amount": "3 carrots",
+       "item": "Carrots, finely grated",
+       "kcal": 82,
+       "protein": 1.8
+      },
+      {
+       "amount": "5 cloves",
+       "item": "Garlic",
+       "kcal": 22,
+       "protein": 1
+      },
+      {
+       "amount": "320 g (the rest of the tub)",
+       "item": "Low-fat (2%) cottage cheese",
+       "kcal": 256,
+       "protein": 33.9
+      },
+      {
+       "amount": "60 g (⅔ cup)",
+       "item": "Grated Parmesan",
+       "kcal": 252,
+       "protein": 21.6
+      },
+      {
+       "amount": "2 tsp",
+       "item": "Olive oil",
+       "kcal": 88,
+       "protein": 0
+      },
+      {
+       "amount": "1 tbsp Italian seasoning, ½ tsp chili, 2 tsp salt",
+       "item": "Italian seasoning, chili flakes, salt, pepper",
+       "kcal": 0,
+       "protein": 0
+      }
+     ],
+     "portionNote": "12 containers: 3 a day for Sat, Sun, Mon and Tue. Freeze Tuesday's 3.",
+     "portions": 12,
+     "steps": [
+      "Heat oil in your largest pot over medium-high. Add onion, carrot and a pinch of salt; cook 6–8 min until soft.",
+      "Add garlic for 1 min, then the turkey. Break it up and cook until no longer pink, 8–10 min.",
+      "Add both jars of marinara, Italian seasoning and chili. Rinse each jar with a splash of water into the pot. Simmer 15 min.",
+      "Meanwhile boil the pasta 1 minute less than the packet says. Drain.",
+      "Blend the cottage cheese until smooth. Take the sauce off the heat and stir in the cottage cheese and Parmesan. Season.",
+      "Toss pasta with the sauce. Let cool 20 min, then divide between 12 containers (weigh the pot and split by weight).",
+      "Label 9 containers for Sat–Mon (fridge) and 3 for Tuesday (freezer)."
+     ],
+     "storage": "Fridge 9 portions for Sat–Mon. Freeze Tuesday's 3 and move them to the fridge Monday night. Reheat 2–3 min with a splash of water.",
+     "title": "Creamy turkey bolognese with protein pasta"
+    }
+   },
+   "timeline": [
+    "Heat oven to 350°F. Make and bake the brownies; let them cool while you cook.",
+    "Start the bolognese. Put the pasta water on.",
+    "While the sauce simmers, make the overnight oats.",
+    "Finish the bolognese, cool, portion 12 containers. 3 go in the freezer.",
+    "Make the frosting, cut and frost the brownies."
+   ]
+  },
+  "tue": {
+   "covers": "Wed, Thu, Fri",
+   "date": "2026-09-29",
+   "recipes": {
+    "breakfast": {
+     "blurb": "Creamy vanilla oats with chia and wild blueberries.",
+     "fav": false,
+     "ingredients": [
+      {
+       "amount": "150 g (1⅔ cups)",
+       "item": "Rolled oats",
+       "kcal": 562,
+       "protein": 18.8
+      },
+      {
+       "amount": "90 g (3 scoops)",
+       "item": "Vanilla whey protein",
+       "kcal": 360,
+       "protein": 72
+      },
+      {
+       "amount": "510 g (about 2 cups)",
+       "item": "Nonfat Greek yogurt",
+       "kcal": 270,
+       "protein": 54.1
+      },
+      {
+       "amount": "360 ml (1½ cups)",
+       "item": "Unsweetened almond milk",
+       "kcal": 47,
+       "protein": 1.4
+      },
+      {
+       "amount": "30 g (3 tbsp)",
+       "item": "Chia seeds",
+       "kcal": 146,
+       "protein": 5
+      },
+      {
+       "amount": "180 g (1⅓ cups)",
+       "item": "Frozen wild blueberries",
+       "kcal": 103,
+       "protein": 1.3
+      },
+      {
+       "amount": "to taste",
+       "item": "Cinnamon, pinch of salt",
+       "kcal": 0,
+       "protein": 0
+      }
+     ],
+     "portionNote": "3 jars, one per day",
+     "portions": 3,
+     "steps": [
+      "In a large bowl whisk the whey into the almond milk until there are no lumps.",
+      "Stir in the Greek yogurt, oats, chia, cinnamon and salt until smooth.",
+      "Divide evenly between 3 jars (weigh the bowl and split by weight if you can).",
+      "Top each jar with 60 g frozen blueberries straight from the freezer. Lid and refrigerate."
+     ],
+     "storage": "Fridge, up to 4 days. Eat cold straight from the jar.",
+     "title": "Blueberry vanilla overnight oats"
+    },
+    "dessert": {
+     "blurb": "No-bake cottage cheese cheesecake on a graham crunch base.",
+     "fav": false,
+     "ingredients": [
+      {
+       "amount": "360 g (1½ cups)",
+       "item": "Low-fat (2%) cottage cheese",
+       "kcal": 288,
+       "protein": 38.2
+      },
+      {
+       "amount": "540 g (2¼ cups)",
+       "item": "Nonfat Greek yogurt",
+       "kcal": 286,
+       "protein": 57.2
+      },
+      {
+       "amount": "75 g (2½ scoops)",
+       "item": "Vanilla whey protein",
+       "kcal": 300,
+       "protein": 60
+      },
+      {
+       "amount": "90 g (6 full sheets, crushed)",
+       "item": "Graham cracker crumbs",
+       "kcal": 381,
+       "protein": 6.2
+      },
+      {
+       "amount": "2 tbsp",
+       "item": "Honey",
+       "kcal": 91,
+       "protein": 0.1
+      },
+      {
+       "amount": "180 g (1⅓ cups)",
+       "item": "Frozen wild blueberries",
+       "kcal": 103,
+       "protein": 1.3
+      },
+      {
+       "amount": "1 lemon",
+       "item": "Lemon, zest + juice",
+       "kcal": 9,
+       "protein": 0.2
+      },
+      {
+       "amount": "1 tsp",
+       "item": "Vanilla extract, pinch of salt",
+       "kcal": 0,
+       "protein": 0
+      }
+     ],
+     "portionNote": "3 pots, one per day",
+     "portions": 3,
+     "steps": [
+      "Blend cottage cheese in a blender or food processor until completely smooth (1–2 min).",
+      "Add yogurt, whey, 1 tbsp honey, lemon zest, half the lemon juice, vanilla and salt. Blend until thick and smooth. Taste; add more lemon if wanted.",
+      "Divide graham crumbs between 3 pots (30 g each), press down lightly.",
+      "Spoon the filling over the crumbs.",
+      "Warm the blueberries in a small pan with the remaining honey and lemon juice for 3–4 min until jammy. Cool, then spoon on top.",
+      "Chill at least 2 hours before eating."
+     ],
+     "storage": "Fridge, up to 4 days.",
+     "title": "Lemon blueberry cheesecake pots"
+    },
+    "main": {
+     "blurb": "Smoky chicken, rice, black beans, peppers, salsa and a yogurt crema.",
+     "fav": false,
+     "ingredients": [
+      {
+       "amount": "1.8 kg (4 lb)",
+       "item": "Chicken breast",
+       "kcal": 2160,
+       "protein": 405
+      },
+      {
+       "amount": "315 g (1½ cups) dry",
+       "item": "Basmati or long-grain rice (dry)",
+       "kcal": 1134,
+       "protein": 22.1
+      },
+      {
+       "amount": "2 × 15 oz cans",
+       "item": "Black beans, drained",
+       "kcal": 437,
+       "protein": 28.8
+      },
+      {
+       "amount": "1 × 16 oz jar",
+       "item": "Chunky salsa",
+       "kcal": 130,
+       "protein": 6.8
+      },
+      {
+       "amount": "2 peppers",
+       "item": "Bell peppers, sliced",
+       "kcal": 78,
+       "protein": 3
+      },
+      {
+       "amount": "1 onion",
+       "item": "Yellow onion, sliced",
+       "kcal": 60,
+       "protein": 1.6
+      },
+      {
+       "amount": "90 g (¾ cup)",
+       "item": "Reduced-fat Mexican cheese",
+       "kcal": 257,
+       "protein": 22.5
+      },
+      {
+       "amount": "270 g (1 cup + 2 tbsp)",
+       "item": "Nonfat Greek yogurt (crema)",
+       "kcal": 143,
+       "protein": 28.6
+      },
+      {
+       "amount": "2 limes",
+       "item": "Lime juice",
+       "kcal": 8,
+       "protein": 0.1
+      },
+      {
+       "amount": "4 tsp",
+       "item": "Olive oil",
+       "kcal": 159,
+       "protein": 0
+      },
+      {
+       "amount": "3 cloves",
+       "item": "Garlic",
+       "kcal": 13,
+       "protein": 0.6
+      },
+      {
+       "amount": "1 tbsp chipotle, 2 tsp each cumin + paprika, 1 tsp oregano, 2 tsp salt",
+       "item": "Chipotle chili powder, cumin, smoked paprika, oregano, salt",
+       "kcal": 0,
+       "protein": 0
+      }
+     ],
+     "portionNote": "9 containers: 3 a day for Wed, Thu and Fri",
+     "portions": 9,
+     "steps": [
+      "Heat oven to 425°F. Cook the rice per the packet (rice cooker is fine).",
+      "Cut chicken into 1-inch pieces. Toss with 2 tsp oil, the spices, minced garlic and the juice of 1 lime. Spread on 2 lined sheet pans.",
+      "Toss peppers and onion with remaining oil and a pinch of salt; add to the pans. Roast 18–22 min until chicken reaches 165°F.",
+      "Warm the drained beans in a small pan with a pinch of salt.",
+      "Crema: stir the 270 g Greek yogurt with the juice of 1 lime and a pinch of salt and chipotle. Spoon into 9 small lidded pots (30 g each).",
+      "Let everything cool 20 min. Portion into 9 containers: rice, beans, chicken + veg evenly, then 50 g salsa and 10 g cheese each.",
+      "Label containers with today's date and the day to eat them."
+     ],
+     "storage": "Fridge. Eat by Friday. Reheat 2–3 min, then add the cold crema pot.",
+     "title": "Chipotle chicken burrito bowls"
+    }
+   },
+   "timeline": [
+    "Start the rice. Heat oven to 425°F.",
+    "Make the cheesecake pots first (they need 2 hours to chill).",
+    "Make the overnight oats and put them in the fridge.",
+    "Prep and roast the chicken and veg. While it roasts, warm the beans and make the crema.",
+    "Cool 20 minutes, then portion the bowls, label and refrigerate."
+   ]
+  }
+ },
+ "shopping": [
+  {
+   "aisle": "Produce",
+   "buy": "2",
+   "for": "tue",
+   "id": "s01",
+   "item": "Bell peppers (any colour)",
+   "stock": false
+  },
+  {
+   "aisle": "Produce",
+   "buy": "3",
+   "for": "both",
+   "id": "s02",
+   "item": "Yellow onions",
+   "stock": false
+  },
+  {
+   "aisle": "Produce",
+   "buy": "1 head",
+   "for": "both",
+   "id": "s03",
+   "item": "Garlic",
+   "stock": false
+  },
+  {
+   "aisle": "Produce",
+   "buy": "2",
+   "for": "tue",
+   "id": "s04",
+   "item": "Limes",
+   "stock": false
+  },
+  {
+   "aisle": "Produce",
+   "buy": "1",
+   "for": "tue",
+   "id": "s05",
+   "item": "Lemon",
+   "stock": false
+  },
+  {
+   "aisle": "Produce",
+   "buy": "3",
+   "for": "fri",
+   "id": "s06",
+   "item": "Carrots (loose)",
+   "stock": false
+  },
+  {
+   "aisle": "Produce",
+   "buy": "4 (ripe or nearly)",
+   "for": "fri",
+   "id": "s07",
+   "item": "Bananas",
+   "stock": false
+  },
+  {
+   "aisle": "Meat",
+   "buy": "4 lb",
+   "for": "tue",
+   "id": "s08",
+   "item": "Boneless skinless chicken breast",
+   "stock": false
+  },
+  {
+   "aisle": "Meat",
+   "buy": "4 × 1 lb",
+   "for": "fri",
+   "id": "s09",
+   "item": "99% lean ground turkey breast",
+   "stock": false
+  },
+  {
+   "aisle": "Dairy & eggs",
+   "buy": "3 × 32 oz tubs",
+   "for": "both",
+   "id": "s10",
+   "item": "Fage 0% Greek yogurt",
+   "stock": false
+  },
+  {
+   "aisle": "Dairy & eggs",
+   "buy": "1 × 24 oz tub",
+   "for": "both",
+   "id": "s11",
+   "item": "2% cottage cheese",
+   "stock": false
+  },
+  {
+   "aisle": "Dairy & eggs",
+   "buy": "1 × 8 oz bag",
+   "for": "tue",
+   "id": "s12",
+   "item": "Reduced-fat Mexican shredded cheese",
+   "stock": false
+  },
+  {
+   "aisle": "Dairy & eggs",
+   "buy": "1 × 5 oz tub",
+   "for": "fri",
+   "id": "s13",
+   "item": "Grated Parmesan",
+   "stock": false
+  },
+  {
+   "aisle": "Dairy & eggs",
+   "buy": "half dozen",
+   "for": "fri",
+   "id": "s14",
+   "item": "Large eggs",
+   "stock": false
+  },
+  {
+   "aisle": "Frozen",
+   "buy": "1 × 16 oz bag",
+   "for": "tue",
+   "id": "s15",
+   "item": "Frozen wild blueberries",
+   "stock": false
+  },
+  {
+   "aisle": "Pantry",
+   "buy": "2 × 14.5 oz boxes",
+   "for": "fri",
+   "id": "s16",
+   "item": "Barilla Protein+ penne",
+   "stock": false
+  },
+  {
+   "aisle": "Pantry",
+   "buy": "2 × 24 oz jars",
+   "for": "fri",
+   "id": "s17",
+   "item": "Marinara sauce",
+   "stock": false
+  },
+  {
+   "aisle": "Pantry",
+   "buy": "2 × 15 oz cans",
+   "for": "tue",
+   "id": "s18",
+   "item": "Black beans",
+   "stock": false
+  },
+  {
+   "aisle": "Pantry",
+   "buy": "1 × 16 oz jar",
+   "for": "tue",
+   "id": "s19",
+   "item": "Chunky salsa",
+   "stock": false
+  },
+  {
+   "aisle": "Pantry",
+   "buy": "1 × 32 oz carton",
+   "for": "both",
+   "id": "s20",
+   "item": "Unsweetened almond milk, shelf-stable",
+   "stock": false
+  },
+  {
+   "aisle": "Pantry",
+   "buy": "1 box",
+   "for": "tue",
+   "id": "s21",
+   "item": "Graham crackers",
+   "stock": true
+  },
+  {
+   "aisle": "Pantry",
+   "buy": "2 lb bag",
+   "for": "tue",
+   "id": "s22",
+   "item": "Basmati rice",
+   "stock": true
+  },
+  {
+   "aisle": "Pantry",
+   "buy": "42 oz canister",
+   "for": "both",
+   "id": "s23",
+   "item": "Rolled oats",
+   "stock": true
+  },
+  {
+   "aisle": "Pantry",
+   "buy": "2 lb tub (lasts ~2 weeks)",
+   "for": "both",
+   "id": "s24",
+   "item": "Vanilla whey protein",
+   "stock": true
+  },
+  {
+   "aisle": "Pantry",
+   "buy": "6.5 oz jar",
+   "for": "fri",
+   "id": "s25",
+   "item": "Peanut butter powder (PB2)",
+   "stock": true
+  },
+  {
+   "aisle": "Baking",
+   "buy": "8 oz",
+   "for": "fri",
+   "id": "s26",
+   "item": "Unsweetened cocoa powder",
+   "stock": true
+  },
+  {
+   "aisle": "Baking",
+   "buy": "12 oz bag",
+   "for": "fri",
+   "id": "s27",
+   "item": "Semi-sweet chocolate chips",
+   "stock": true
+  },
+  {
+   "aisle": "Pantry",
+   "buy": "small bag",
+   "for": "tue",
+   "id": "s28",
+   "item": "Chia seeds",
+   "stock": true
+  },
+  {
+   "aisle": "Pantry",
+   "buy": "small bottle",
+   "for": "fri",
+   "id": "s29",
+   "item": "Maple syrup",
+   "stock": true
+  },
+  {
+   "aisle": "Pantry",
+   "buy": "small bottle",
+   "for": "tue",
+   "id": "s30",
+   "item": "Honey",
+   "stock": true
+  },
+  {
+   "aisle": "Spices",
+   "buy": "any you don't have",
+   "for": "both",
+   "id": "s31",
+   "item": "Spices: chipotle chili powder, cumin, smoked paprika, oregano, Italian seasoning, chili flakes, cinnamon",
+   "stock": true
+  },
+  {
+   "aisle": "Baking",
+   "buy": "any you don't have",
+   "for": "both",
+   "id": "s32",
+   "item": "Olive oil, vanilla extract, baking powder, salt",
+   "stock": true
+  }
+ ],
+ "source": "Claude (starter week)",
+ "week": "2026-09-28"
+}

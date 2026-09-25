@@ -1,0 +1,372 @@
+{
+ "t01": {
+  "active": true,
+  "area": "Meal prep",
+  "day": "any",
+  "freq": "visit",
+  "link": "meals",
+  "notes": "Recipes, portions and prep order are on the Meals tab.",
+  "order": 1,
+  "title": "Cook this visit's meal prep"
+ },
+ "t02": {
+  "active": true,
+  "area": "Meal prep",
+  "day": "any",
+  "freq": "visit",
+  "notes": "",
+  "order": 2,
+  "title": "Put away the grocery delivery and check use-by dates"
+ },
+ "t03": {
+  "active": true,
+  "area": "Meal prep",
+  "day": "any",
+  "freq": "visit",
+  "notes": "",
+  "order": 3,
+  "title": "Fridge check: bin anything expired, wipe spills, move older meals to the front"
+ },
+ "t04": {
+  "active": true,
+  "area": "Kitchen",
+  "day": "any",
+  "freq": "visit",
+  "notes": "",
+  "order": 4,
+  "title": "Run and unload the dishwasher; hand-wash anything left"
+ },
+ "t05": {
+  "active": true,
+  "area": "Kitchen",
+  "day": "any",
+  "freq": "visit",
+  "notes": "",
+  "order": 5,
+  "title": "Wipe counters, backsplash and stovetop"
+ },
+ "t06": {
+  "active": true,
+  "area": "Kitchen",
+  "day": "any",
+  "freq": "visit",
+  "notes": "",
+  "order": 6,
+  "title": "Clean the sink and polish the taps"
+ },
+ "t07": {
+  "active": true,
+  "area": "Kitchen",
+  "day": "any",
+  "freq": "visit",
+  "notes": "",
+  "order": 7,
+  "title": "Wipe the microwave inside and out"
+ },
+ "t08": {
+  "active": true,
+  "area": "Kitchen",
+  "day": "any",
+  "freq": "visit",
+  "notes": "",
+  "order": 8,
+  "title": "Wipe appliance fronts and cabinet handles"
+ },
+ "t09": {
+  "active": true,
+  "area": "Kitchen",
+  "day": "any",
+  "freq": "visit",
+  "notes": "",
+  "order": 9,
+  "title": "Sweep and mop the kitchen floor"
+ },
+ "t10": {
+  "active": true,
+  "area": "Kitchen",
+  "day": "any",
+  "freq": "visit",
+  "notes": "",
+  "order": 10,
+  "title": "Empty trash and recycling; put in new liners"
+ },
+ "t11": {
+  "active": true,
+  "area": "Kitchen",
+  "day": "tue",
+  "freq": "monthly",
+  "notes": "Do it before the meal prep goes in.",
+  "order": 11,
+  "title": "Deep clean fridge shelves and drawers"
+ },
+ "t12": {
+  "active": true,
+  "area": "Kitchen",
+  "day": "any",
+  "freq": "monthly",
+  "notes": "",
+  "order": 12,
+  "title": "Clean inside the oven"
+ },
+ "t13": {
+  "active": true,
+  "area": "Kitchen",
+  "day": "any",
+  "freq": "monthly",
+  "notes": "",
+  "order": 13,
+  "title": "Wipe all cabinet fronts"
+ },
+ "t14": {
+  "active": true,
+  "area": "Bathrooms",
+  "day": "any",
+  "freq": "visit",
+  "notes": "",
+  "order": 14,
+  "title": "Clean toilets inside and out"
+ },
+ "t15": {
+  "active": true,
+  "area": "Bathrooms",
+  "day": "any",
+  "freq": "visit",
+  "notes": "",
+  "order": 15,
+  "title": "Clean sinks, counters and mirrors"
+ },
+ "t16": {
+  "active": true,
+  "area": "Bathrooms",
+  "day": "any",
+  "freq": "visit",
+  "notes": "",
+  "order": 16,
+  "title": "Clean shower, tub and glass"
+ },
+ "t17": {
+  "active": true,
+  "area": "Bathrooms",
+  "day": "any",
+  "freq": "visit",
+  "notes": "",
+  "order": 17,
+  "title": "Swap in clean towels and bath mats"
+ },
+ "t18": {
+  "active": true,
+  "area": "Bathrooms",
+  "day": "any",
+  "freq": "visit",
+  "notes": "Add anything running low to the notes for Owen.",
+  "order": 18,
+  "title": "Restock toilet paper, hand soap and tissues"
+ },
+ "t19": {
+  "active": true,
+  "area": "Bathrooms",
+  "day": "any",
+  "freq": "visit",
+  "notes": "",
+  "order": 19,
+  "title": "Mop bathroom floors"
+ },
+ "t20": {
+  "active": true,
+  "area": "Bathrooms",
+  "day": "any",
+  "freq": "monthly",
+  "notes": "",
+  "order": 20,
+  "title": "Descale showerheads; wash shower curtain and bath mats"
+ },
+ "t21": {
+  "active": true,
+  "area": "Bedrooms",
+  "day": "any",
+  "freq": "visit",
+  "notes": "",
+  "order": 21,
+  "title": "Make beds and tidy the main bedroom"
+ },
+ "t22": {
+  "active": true,
+  "area": "Bedrooms",
+  "day": "fri",
+  "freq": "weekly",
+  "notes": "",
+  "order": 22,
+  "title": "Change bed linens"
+ },
+ "t23": {
+  "active": true,
+  "area": "Bedrooms",
+  "day": "any",
+  "freq": "visit",
+  "notes": "",
+  "order": 23,
+  "title": "Dust surfaces and nightstands"
+ },
+ "t24": {
+  "active": true,
+  "area": "Bedrooms",
+  "day": "any",
+  "freq": "visit",
+  "notes": "",
+  "order": 24,
+  "title": "Vacuum the main bedroom"
+ },
+ "t25": {
+  "active": true,
+  "area": "Bedrooms",
+  "day": "any",
+  "freq": "monthly",
+  "notes": "",
+  "order": 25,
+  "title": "Vacuum under beds; wash pillow protectors"
+ },
+ "t26": {
+  "active": true,
+  "area": "Living areas",
+  "day": "any",
+  "freq": "visit",
+  "notes": "",
+  "order": 26,
+  "title": "Tidy and reset: cushions, throws, remotes, surfaces"
+ },
+ "t27": {
+  "active": true,
+  "area": "Living areas",
+  "day": "any",
+  "freq": "visit",
+  "notes": "",
+  "order": 27,
+  "title": "Dust shelves, TV unit and surfaces"
+ },
+ "t28": {
+  "active": true,
+  "area": "Living areas",
+  "day": "any",
+  "freq": "visit",
+  "notes": "",
+  "order": 28,
+  "title": "Vacuum and mop living areas and hallway"
+ },
+ "t29": {
+  "active": true,
+  "area": "Living areas",
+  "day": "fri",
+  "freq": "weekly",
+  "notes": "",
+  "order": 29,
+  "title": "Wipe light switches and door handles"
+ },
+ "t30": {
+  "active": true,
+  "area": "Living areas",
+  "day": "any",
+  "freq": "monthly",
+  "notes": "",
+  "order": 30,
+  "title": "Dust blinds, baseboards and vents"
+ },
+ "t31": {
+  "active": true,
+  "area": "Living areas",
+  "day": "any",
+  "freq": "monthly",
+  "notes": "",
+  "order": 31,
+  "title": "Clean interior windows and glass doors"
+ },
+ "t32": {
+  "active": true,
+  "area": "Laundry",
+  "day": "any",
+  "freq": "visit",
+  "notes": "",
+  "order": 32,
+  "title": "Wash, dry, fold and put away laundry"
+ },
+ "t34": {
+  "active": true,
+  "area": "Laundry",
+  "day": "tue",
+  "freq": "weekly",
+  "notes": "",
+  "order": 34,
+  "title": "Wash the bed linens and towels changed today"
+ },
+ "t35": {
+  "active": true,
+  "area": "Laundry",
+  "day": "any",
+  "freq": "monthly",
+  "notes": "",
+  "order": 35,
+  "title": "Clean the washer door seal and dryer lint trap"
+ },
+ "t36": {
+  "active": true,
+  "area": "Outdoor",
+  "day": "fri",
+  "freq": "weekly",
+  "notes": "",
+  "order": 36,
+  "title": "Sweep/Blow patio, balcony and entrance"
+ },
+ "t37": {
+  "active": true,
+  "area": "Outdoor",
+  "day": "fri",
+  "freq": "weekly",
+  "notes": "",
+  "order": 37,
+  "title": "Wipe down outdoor furniture"
+ },
+ "t38": {
+  "active": true,
+  "area": "Outdoor",
+  "day": "fri",
+  "freq": "weekly",
+  "notes": "",
+  "order": 38,
+  "title": "Water outdoor plants"
+ },
+ "t39": {
+  "active": true,
+  "area": "Spare rooms",
+  "day": "any",
+  "freq": "monthly",
+  "notes": "",
+  "order": 39,
+  "title": "Vacuum and mop spare rooms"
+ },
+ "t40": {
+  "active": true,
+  "area": "Spare rooms",
+  "day": "any",
+  "freq": "monthly",
+  "notes": "",
+  "order": 40,
+  "title": "Dust and air out spare rooms"
+ },
+ "t41": {
+  "active": true,
+  "area": "Whole house",
+  "day": "any",
+  "freq": "visit",
+  "notes": "",
+  "order": 41,
+  "title": "Walk-through: put stray items back where they live"
+ },
+ "t42": {
+  "active": true,
+  "area": "Whole house",
+  "day": "any",
+  "freq": "fortnightly",
+  "notes": "",
+  "order": 42,
+  "title": "Organise one cupboard or drawer (work around the house)"
+ }
+}

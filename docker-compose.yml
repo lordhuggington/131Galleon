@@ -1,0 +1,22 @@
+services:
+  app:
+    build: .
+    env_file: .env
+    environment:
+      HRS_DB_PATH: /data/house.db
+    volumes:
+      - ./data:/data
+    ports:
+      - "127.0.0.1:8000:8000"   # only reachable on the server itself; the tunnel or a reverse proxy fronts it
+    restart: unless-stopped
+
+  # Optional: publish through Cloudflare Tunnel with no open ports.
+  # In the Cloudflare dashboard, point the tunnel's public hostname at http://app:8000
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on: [app]
+    restart: unless-stopped
+    profiles: ["tunnel"]

@@ -1,0 +1,20 @@
+{
+ "dislikes": "",
+ "fri": {
+  "breakfast": 4,
+  "covers": "Sat, Sun, Mon, Tue",
+  "dessert": 4,
+  "main": 12
+ },
+ "kcal": 500,
+ "likes": "",
+ "pantry": "",
+ "protein": 50,
+ "store": "",
+ "tue": {
+  "breakfast": 3,
+  "covers": "Wed, Thu, Fri",
+  "dessert": 3,
+  "main": 9
+ }
+}
