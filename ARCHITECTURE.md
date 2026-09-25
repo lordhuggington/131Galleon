@@ -16,6 +16,7 @@ The first version ran as a Claude artifact: Claude's platform supplied sign-in, 
 | Permissions | Page hid owner tabs; database let any editor write | Enforced server-side per route (`endpoint(role="owner")`); staff never receive the shopping list, and each person's Meals access is a per-user `can_see_meals` flag |
 | Data | Firestore-style JSON documents | SQLite tables (see below), WAL mode, foreign keys on |
 | Live updates | Push subscriptions | Page polls `/api/state` every 20 s while visible, and after every change |
+| Front end | One artifact page rendered by Claude | React 19 + TypeScript built with Vite from `frontend/` into `static/`; one `AppState` context (reducer + React 19 hooks), optimistic ticks, 20 s polling, screens kept alive with `<Activity>` |
 | AI menus | In-browser `sample()` on the viewer's Claude plan | Server calls the Claude Messages API with your `ANTHROPIC_API_KEY` (billed to your Anthropic account per menu). Runs as a background job; the page polls `/api/jobs/{id}` and can cancel |
 | Hosting | claude.ai | One Docker container + a volume; Cloudflare Tunnel or a reverse proxy for HTTPS |
 | Backups | Platform | `deploy/backup.sh` (SQLite online backup → gzip, plus an rsync of the photos directory; optional off-site copy to a Hetzner Storage Box) |
@@ -39,7 +40,8 @@ The first version ran as a Claude artifact: Claude's platform supplied sign-in, 
 - **Raw-body photo uploads.** `endpoint(raw_body=True)` hands the handler the request body as `bytes`, so the browser can `POST` a resized JPEG without a multipart parser — no new dependency. The server checks the `FF D8 FF` magic bytes and an 8 MB cap, and names the file from `secrets.token_hex(16)`, never from user input.
 - **Foreign keys off during migrations.** SQLite can't alter a CHECK constraint, so `002` rebuilds `users` with the DROP + RENAME procedure. `migrate()` runs every script with `PRAGMA foreign_keys = OFF` and then asserts `PRAGMA foreign_key_check` is empty, so the rebuild can't quietly cascade-delete sessions or blank out `done_by`.
 - **Twilio Verify rather than hand-rolled OTP.** Twilio stores and expires the code, rate-limits per number and handles delivery; the app keeps no code and no SMS state of its own.
-- **No build step on the front end.** `static/app.js` is the artifact's code with the platform calls swapped for `fetch`. It will be the first thing to outgrow if the app grows; see below.
+- **React + TypeScript + Vite on the front end, with a multi-stage Docker build.** `frontend/` is the source; `npm run build` emits `static/` (gitignored) and the image's first stage does that with `npm ci`. Dev deps are kept to TypeScript, Vite, `@vitejs/plugin-react` and Vitest — no UI kit, no state library and no router: `location.hash` plus one context/reducer is enough for five screens. Vitest covers the pure logic (dates, due-task rules, macros, shopping text, phone formatting); screens are checked by TypeScript, the build and a manual smoke pass.
+- **No inline scripts, ever.** The CSP is `script-src 'self'`, so the build must emit only external module scripts — the plan greps the built `index.html` to prove it. React escapes text by default and `dangerouslySetInnerHTML` is banned, which replaces v1's hand-rolled `esc()`.
 
 ## Before going live
 
@@ -54,7 +56,6 @@ The first version ran as a Claude artifact: Claude's platform supplied sign-in, 
 - **More than one house.** Add a `households` table and a `household_id` column on tasks, visits, settings and meal plans, and a `memberships(user_id, household_id, role)` table so a housekeeper can work for more than one home. Easier to do before there's much data.
 - **HomeKit / Schlage integration.** Door codes are typed in by hand today. Talking to the lock directly (programming a code per person, or reading who unlocked the door when) is Owen's next project.
 - **Different visit days.** Tuesday/Friday is currently baked into the schedule logic (`isVisitDay`, `day` values). A `visit_schedule` setting (days of week and hours) would make it general.
-- **Front end.** Once there are more screens, move `static/app.js` to React + TypeScript with Vite, keeping the same JSON API.
 - **Notifications.** Email or WhatsApp to the owner when a visit is finished or a note mentions something running low (the note field is already per visit).
 - **Recipe library.** Recipes live as JSON inside each week. If you want search, ratings or "cook this again", split them into a `recipes` table referenced by week.
 - **Grocery ordering.** The shopping list is structured (item, pack size, aisle), so a later step could push it to Instacart or Amazon Fresh.

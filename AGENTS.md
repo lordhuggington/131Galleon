@@ -8,7 +8,10 @@
 - Visit photos are files under `HRS_PHOTOS_DIR` (default `data/photos`) with random names (`secrets.token_hex(16)`), served by `GET /photos/{filename}` — registered before the static mount and outside `/api/` on purpose, so the `no-store` header doesn't stop the browser caching them. The handler looks the filename up in `visit_photos` before touching the disk; keep it that way.
 - `user_dict` (everyone's phone and door code) is owner-only output; `me_dict` gives a person only their own. Don't widen either.
 - Never log a door code or a sign-in code, and never log a full phone number — redact it the way `app/sms.py: _redact` does.
-- Front end is `static/app.js` (vanilla JS, no build). All user text goes through `esc()` before `innerHTML`.
+- Front end lives in `frontend/` (React 19 + TypeScript + Vite). `cd frontend && npm test` (Vitest, node env, pure logic in `src/lib` only) and `npm run typecheck`; `npm run build` writes `static/`.
+- `static/` is a build output: gitignored, never edited by hand, rebuilt by `npm run build` and by the Dockerfile's node stage.
+- CSP is `script-src 'self'`: no inline `<script>` in the built page (check with a grep after building), and never use `dangerouslySetInnerHTML`.
+- Frontend dependencies stay minimal: react, react-dom, and dev-only typescript, vite, @vitejs/plugin-react, @types/react, @types/react-dom, vitest. Adding anything else needs a reason in the PR.
 - Non-GET requests must send `X-HRS: 1` (CSRF guard), including the raw-body photo upload.
 - Visit days are Tuesday and Friday; weeks are keyed by their Monday (`YYYY-MM-DD`).
 - Never commit `.env` or anything in `data/`.

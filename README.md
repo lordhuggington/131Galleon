@@ -19,7 +19,7 @@ Staff get a free-text label ("Housekeeper", "Builder", "Pool service"), so anyon
 code changes. With Twilio set up (see below), everyone signs in with a code texted to their phone; owners
 also keep a password as a backup.
 
-Stack: Python 3.11+, [Starlette](https://www.starlette.io/) (the framework under FastAPI), SQLite, vanilla JS. Three dependencies: `starlette`, `uvicorn`, `httpx`.
+Stack: Python 3.11+, [Starlette](https://www.starlette.io/) (the framework under FastAPI) and SQLite on the server — three dependencies: `starlette`, `uvicorn`, `httpx`. The front end is React 19 + TypeScript, built with [Vite](https://vite.dev/) from `frontend/` into `static/` (build output, not committed).
 
 ## Run it locally
 
@@ -33,8 +33,26 @@ python -m app.cli create-user --username owen --name "Owen" --role owner
 python -m app.cli create-user --username maria --name "Maria" --role staff --label Housekeeper
 
 export ANTHROPIC_API_KEY=sk-ant-...                     # only needed for "Create menu"
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --port 8000                # terminal 1: the API on :8000
 ```
+
+Then, in a second terminal, run the front end with hot reload:
+
+```bash
+cd frontend
+npm install
+npm run dev                                             # Vite on :5173, proxying /api, /photos and /healthz to :8000
+```
+
+Open http://localhost:5173 while developing. `npm test` runs the Vitest suites for the date, schedule, macro, shopping and phone helpers; `npm run typecheck` runs TypeScript.
+
+For production (and to serve everything from uvicorn on :8000), build the front end once:
+
+```bash
+cd frontend && npm run build          # writes ../static
+```
+
+`static/` is a build output and is gitignored; the Docker image builds it in its first stage.
 
 Open http://localhost:8000.
 
@@ -147,7 +165,11 @@ app/
   db.py        SQLite connection + migration runner
   cli.py       admin commands
 migrations/    numbered .sql files (tracked with PRAGMA user_version)
-static/        index.html, app.js, app.css (no build step)
+frontend/      React 19 + TypeScript app (Vite)
+  src/lib/       pure logic: dates, due-task schedule, macros, shopping text, phone (Vitest)
+  src/state/     AppState context + reducer, polling, toasts
+  src/features/  home, visit, meals, shopping, setup, auth screens
+static/        build output from `npm run build` (gitignored, served by Starlette)
 seed/          tasks, settings and the starter week exported from the Claude-hosted version
 tests/         unittest suite (API, roles, generation with a mocked Claude API)
 deploy/        backup script

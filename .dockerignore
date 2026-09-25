@@ -6,3 +6,7 @@ backups
 __pycache__
 tests
 *.db*
+frontend/node_modules
+static
+.superpowers
+docs
