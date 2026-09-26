@@ -818,9 +818,12 @@ class StreamParsingTest(unittest.TestCase):
     def tearDown(self):
         restore_env(self.saved_env)
 
+    def _sse(self, events):
+        return "".join(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n" for e in events)
+
     def _transport(self, events, status=200, capture=None, error_body='{"error":{"type":"rate_limit_error"}}'):
         import httpx
-        body = "".join(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n" for e in events)
+        body = self._sse(events)
 
         def handler(request):
             assert request.headers["x-api-key"] == "test-key"
@@ -829,6 +832,15 @@ class StreamParsingTest(unittest.TestCase):
             if capture is not None:
                 capture.append(sent)
             return httpx.Response(status, text=body if status == 200 else error_body)
+        return httpx.MockTransport(handler)
+
+    def _turns_transport(self, turns, capture):
+        """Answer each successive request with the next stream in `turns`; the last one repeats."""
+        import httpx
+
+        def handler(request):
+            capture.append(json.loads(request.content))
+            return httpx.Response(200, text=self._sse(turns[min(len(capture) - 1, len(turns) - 1)]))
         return httpx.MockTransport(handler)
 
     def test_collects_text(self):
@@ -856,21 +868,121 @@ class StreamParsingTest(unittest.TestCase):
             call_model("hi", lambda t: True, transport=self._transport([], status=429))
         self.assertIn("rate-limiting", str(cm.exception))
 
-    def test_sends_thinking_disabled(self):
+    def test_sends_adaptive_thinking_and_web_search(self):
         from app.ai import call_model
         ev = [{"type": "message_delta", "delta": {"stop_reason": "end_turn"}}]
         sent = []
         call_model("hi", lambda t: True, transport=self._transport(ev, capture=sent))
-        self.assertEqual(sent[0]["thinking"], {"type": "disabled"})
-        self.assertEqual(sent[0]["max_tokens"], 16000)
+        self.assertEqual(sent[0]["thinking"], {"type": "adaptive"})
+        self.assertEqual(sent[0]["max_tokens"], 64000)
+        self.assertEqual(sent[0]["tools"], [{"type": "web_search_20260209", "name": "web_search", "max_uses": 8}])
+        self.assertEqual(sent[0]["messages"], [{"role": "user", "content": "hi"}])
 
-    def test_model_that_cannot_disable_thinking_is_explained(self):
+    def test_model_without_adaptive_thinking_is_explained(self):
         from app.ai import GenerationError, call_model
         error_body = json.dumps({"type": "error", "error": {
             "type": "invalid_request_error",
-            "message": '"thinking.type.disabled" is not supported for this model. Thinking defaults to adaptive '
-                       'mode when not specified; use "thinking.type.enabled" with "budget_tokens" for extended thinking.'}})
+            "message": '"thinking.type.adaptive" is not supported for this model. '
+                       'Use "thinking.type.enabled" with "budget_tokens".'}})
         with self.assertRaises(GenerationError) as cm:
             call_model("hi", lambda t: True, transport=self._transport([], status=400, error_body=error_body))
         self.assertIn("ANTHROPIC_MODEL", str(cm.exception))
-        self.assertIn("claude-sonnet-5", str(cm.exception))
+        self.assertIn("claude-opus-5-5", str(cm.exception))
+
+    def test_ignores_thinking_and_search_blocks(self):
+        from app.ai import call_model
+        ev = [{"type": "message_start"},
+              {"type": "content_block_start", "index": 0,
+               "content_block": {"type": "thinking", "thinking": "", "signature": ""}},
+              {"type": "content_block_delta", "index": 0,
+               "delta": {"type": "thinking_delta", "thinking": "Check the oats label first."}},
+              {"type": "content_block_delta", "index": 0, "delta": {"type": "signature_delta", "signature": "sig-1"}},
+              {"type": "content_block_stop", "index": 0},
+              {"type": "content_block_start", "index": 1,
+               "content_block": {"type": "server_tool_use", "id": "srvtoolu_1", "name": "web_search", "input": {}}},
+              {"type": "content_block_delta", "index": 1,
+               "delta": {"type": "input_json_delta", "partial_json": '{"query":'}},
+              {"type": "content_block_delta", "index": 1,
+               "delta": {"type": "input_json_delta", "partial_json": '"oats nutrition"}'}},
+              {"type": "content_block_stop", "index": 1},
+              {"type": "content_block_start", "index": 2, "content_block": {
+                  "type": "web_search_tool_result", "tool_use_id": "srvtoolu_1",
+                  "content": [{"type": "web_search_result", "title": "Oats", "url": "https://example.com/oats"}]}},
+              {"type": "content_block_stop", "index": 2},
+              {"type": "content_block_start", "index": 3, "content_block": {"type": "text", "text": ""}},
+              {"type": "content_block_delta", "index": 3, "delta": {"type": "text_delta", "text": '{"a":'}},
+              {"type": "content_block_delta", "index": 3, "delta": {"type": "text_delta", "text": " 1}"}},
+              {"type": "content_block_stop", "index": 3},
+              {"type": "message_delta", "delta": {"stop_reason": "end_turn"}},
+              {"type": "message_stop"}]
+        seen = []
+        out = call_model("hi", lambda t: seen.append(t) or True, transport=self._transport(ev))
+        self.assertEqual(out, '{"a": 1}')
+        for t in seen:
+            self.assertTrue('{"a": 1}'.startswith(t), f"on_text saw non-prefix {t!r}")
+
+    def test_cancel_is_polled_during_thinking(self):
+        from app.ai import _Cancelled, call_model
+        thinking = [{"type": "content_block_start", "index": 0,
+                     "content_block": {"type": "thinking", "thinking": "", "signature": ""}},
+                    {"type": "content_block_delta", "index": 0,
+                     "delta": {"type": "thinking_delta", "thinking": "Weighing the oats."}},
+                    {"type": "content_block_stop", "index": 0}]
+        ev = thinking + [{"type": "content_block_start", "index": 1, "content_block": {"type": "text", "text": ""}},
+                         {"type": "content_block_delta", "index": 1, "delta": {"type": "text_delta", "text": "{}"}},
+                         {"type": "content_block_stop", "index": 1},
+                         {"type": "message_delta", "delta": {"stop_reason": "end_turn"}}]
+        seen = []
+        out = call_model("hi", lambda t: seen.append(t) or True, transport=self._transport(ev))
+        self.assertEqual(out, "{}")
+        self.assertEqual(seen[0], "")  # polled while thinking, before any text arrived
+        self.assertEqual(seen[-1], "{}")
+        # Stop pressed while the model is still thinking: cancelling must not wait for the first text.
+        with self.assertRaises(_Cancelled):
+            call_model("hi", lambda t: False, transport=self._transport(thinking))
+
+    def test_pause_turn_continues_with_content_so_far(self):
+        from app.ai import call_model
+        result_block = {"type": "web_search_tool_result", "tool_use_id": "srvtoolu_1",
+                        "content": [{"type": "web_search_result", "title": "Oats", "url": "https://example.com/oats"}]}
+        paused = [{"type": "content_block_start", "index": 0,
+                   "content_block": {"type": "server_tool_use", "id": "srvtoolu_1", "name": "web_search", "input": {}}},
+                  {"type": "content_block_delta", "index": 0,
+                   "delta": {"type": "input_json_delta", "partial_json": '{"query":'}},
+                  {"type": "content_block_delta", "index": 0,
+                   "delta": {"type": "input_json_delta", "partial_json": '"oats nutrition"}'}},
+                  {"type": "content_block_stop", "index": 0},
+                  {"type": "content_block_start", "index": 1, "content_block": result_block},
+                  {"type": "content_block_stop", "index": 1},
+                  {"type": "content_block_start", "index": 2, "content_block": {"type": "text", "text": ""}},
+                  {"type": "content_block_delta", "index": 2,
+                   "delta": {"type": "text_delta", "text": "Checking labels. "}},
+                  {"type": "content_block_stop", "index": 2},
+                  {"type": "message_delta", "delta": {"stop_reason": "pause_turn"}}]
+        finished = [{"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+                    {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": '{"a": 1}'}},
+                    {"type": "content_block_stop", "index": 0},
+                    {"type": "message_delta", "delta": {"stop_reason": "end_turn"}}]
+        sent = []
+        out = call_model("hi", lambda t: True, transport=self._turns_transport([paused, finished], sent))
+        self.assertEqual(out, 'Checking labels. {"a": 1}')
+        self.assertEqual(len(sent), 2)
+        self.assertEqual(len(sent[1]["messages"]), 2)
+        self.assertEqual(sent[1]["messages"][1]["role"], "assistant")
+        self.assertEqual(sent[1]["messages"][1]["content"], [
+            {"type": "server_tool_use", "id": "srvtoolu_1", "name": "web_search",
+             "input": {"query": "oats nutrition"}},
+            result_block,
+            {"type": "text", "text": "Checking labels. "}])
+
+    def test_too_many_pause_turns_is_an_error(self):
+        from app.ai import GenerationError, call_model
+        paused = [{"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+                  {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Searching. "}},
+                  {"type": "content_block_stop", "index": 0},
+                  {"type": "message_delta", "delta": {"stop_reason": "pause_turn"}}]
+        sent = []
+        with self.assertRaises(GenerationError) as cm:
+            call_model("hi", lambda t: True, transport=self._turns_transport([paused], sent))
+        self.assertIn("paused", str(cm.exception))
+        self.assertEqual(len(sent), 4)

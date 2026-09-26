@@ -15,7 +15,7 @@ const IDLE: GenState = { running: false, status: "", titles: [], error: "", jobI
 const JOB_POLL_MS = 2000;
 // Consecutive failed job polls before giving up (network blips are retried; a dead server is not).
 const JOB_POLL_MAX_FAILURES = 10;
-const FIRST_STATUS = "Thinking about this week's menu… (the first words usually take 20–60 seconds)";
+const FIRST_STATUS = "Planning the week and checking nutrition… (usually 2–4 minutes before the first words)";
 const GENERIC_ERROR = "Something went wrong while writing the menu. Try again.";
 
 const sleep = (ms: number) =>

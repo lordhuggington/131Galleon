@@ -26,7 +26,7 @@ export function GenPanel({
       <p className="small muted mt6">
         Claude writes the oats, main and dessert for both prep days plus one combined shopping list, sharing
         ingredients between Tuesday and Friday to cut waste. It uses your Setup preferences, last week's leftovers and
-        avoids recent repeats. Takes about a minute.
+        avoids recent repeats, and checks nutrition labels online. Takes about five minutes.
       </p>
       <Field label="Anything for this week? (optional)" htmlFor="genNote">
         <input
