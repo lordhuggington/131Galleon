@@ -1,6 +1,7 @@
 import type { Extra } from "../../api/types";
 import { Check } from "../../components/Check";
 import { Pill } from "../../components/Pill";
+import { rowTap } from "../../lib/rowTap";
 import { useApp } from "../../state/AppState";
 
 export function ExtraRow({
@@ -28,7 +29,7 @@ export function ExtraRow({
   }
 
   return (
-    <div className={extra.done ? "task done" : "task"}>
+    <div className={extra.done ? "task done" : "task"} onClick={rowTap(toggle)}>
       <Check checked={extra.done} label={extra.title} onClick={toggle} />
       <div>
         <div className="t">{extra.title}</div>

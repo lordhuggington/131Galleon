@@ -92,8 +92,10 @@ textarea { min-height: 88px; resize: vertical }
 .visit-meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 4px }
 .progress { height: 10px; border-radius: 99px; background: var(--surface-2); overflow: hidden; margin-top: 14px }
 .progress i { display: block; height: 100%; background: var(--orange); border-radius: 99px; transition: width .3s }
-.task { display: grid; grid-template-columns: 34px 1fr auto; gap: 10px; align-items: start; padding: 12px 16px; border-top: 2px solid var(--line) }
+.task { display: grid; grid-template-columns: 34px 1fr auto; gap: 10px; align-items: start; padding: 12px 16px; border-top: 2px solid var(--line); cursor: pointer }
 .group-h + .task { border-top: 0 }
+/* The "Add a one-off job" form borrows the row layout but is not a tap target. */
+form.task { cursor: auto }
 .check { width: 30px; height: 30px; border-radius: 9px; border: 2px solid var(--muted); background: var(--surface); display: grid; place-items: center; padding: 0 }
 .check svg { width: 16px; height: 16px; opacity: 0 }
 .check[aria-checked="true"] { background: var(--teal); border-color: var(--teal); color: var(--on-accent) }
@@ -136,7 +138,7 @@ textarea { min-height: 88px; resize: vertical }
 .gen-titles { margin: 6px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px }
 
 /* shopping */
-.shop-item { display: grid; grid-template-columns: 34px 1fr auto; gap: 10px; align-items: center; padding: 10px 16px; border-top: 2px solid var(--line) }
+.shop-item { display: grid; grid-template-columns: 34px 1fr auto; gap: 10px; align-items: center; padding: 10px 16px; border-top: 2px solid var(--line); cursor: pointer }
 .group-h + .shop-item { border-top: 0 }
 .shop-item.done .t { color: var(--muted); text-decoration: line-through }
 .shop-item .b { font-family: var(--mono); font-size: 12.5px; color: var(--muted); text-align: right }
