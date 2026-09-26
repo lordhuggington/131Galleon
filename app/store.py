@@ -107,10 +107,10 @@ def save_plan(conn: sqlite3.Connection, week: str, plan: dict, source: str, note
     got = got or {}
     for n, i in enumerate(plan.get("shopping", [])):
         conn.execute(
-            """INSERT INTO shopping_items (week, id, item, buy, aisle, for_session, stock, got, sort_order)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO shopping_items (week, id, item, buy, aisle, for_session, stock, search, got, sort_order)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (week, i["id"], i["item"], i.get("buy", ""), i.get("aisle", "Pantry"), i.get("for", "both"),
-             1 if i.get("stock") else 0, 1 if got.get(i["id"]) else 0, n),
+             1 if i.get("stock") else 0, i.get("search", ""), 1 if got.get(i["id"]) else 0, n),
         )
 
 
@@ -124,7 +124,8 @@ def get_plan(conn: sqlite3.Connection, week: str, include_shopping: bool) -> dic
     if include_shopping:
         items = conn.execute("SELECT * FROM shopping_items WHERE week = ? ORDER BY sort_order", (week,)).fetchall()
         plan["shopping"] = [{"id": r["id"], "item": r["item"], "buy": r["buy"], "aisle": r["aisle"],
-                             "for": r["for_session"], "stock": bool(r["stock"])} for r in items]
+                             "for": r["for_session"], "stock": bool(r["stock"]), "search": r["search"]}
+                            for r in items]
         plan["got"] = {r["id"]: True for r in items if r["got"]}
     return plan
 

@@ -142,6 +142,8 @@ form.task { cursor: auto }
 .group-h + .shop-item { border-top: 0 }
 .shop-item.done .t { color: var(--muted); text-decoration: line-through }
 .shop-item .b { font-family: var(--mono); font-size: 12.5px; color: var(--muted); text-align: right }
+/* the Amazon Fresh search sits under the quantity so long item names keep their width */
+.shop-item .b .linkish { display: block; margin-top: 3px; font-family: var(--body); font-size: 12.5px }
 .copybox { width: 100%; min-height: 200px; font-family: var(--mono); font-size: 12.5px }
 
 /* setup */
