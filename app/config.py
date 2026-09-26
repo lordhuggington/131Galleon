@@ -34,7 +34,7 @@ def get_config() -> Config:
     return Config(
         db_path=os.environ.get("HRS_DB_PATH", "data/house.db"),
         anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
-        anthropic_model=os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5"),
+        anthropic_model=os.environ.get("ANTHROPIC_MODEL", "claude-opus-5-5"),
         cookie_secure=_bool("HRS_COOKIE_SECURE", True),
         session_days=int(os.environ.get("HRS_SESSION_DAYS", "30")),
         twilio_account_sid=os.environ.get("TWILIO_ACCOUNT_SID", "").strip(),

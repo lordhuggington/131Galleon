@@ -33,7 +33,7 @@ def build_prompt(settings: dict, week: str, recent_titles: list[str], favourites
     tue, fri = add_days(week, 1), add_days(week, 4)
     lst = lambda a: "; ".join(a) if a else "none"
     store_txt = f" ({st['store']})" if st.get("store") else ""
-    return f"""Plan one week of batch meal prep for a housekeeper who cooks for one adult in Los Angeles on Tuesdays and Fridays. Reply with only the JSON described at the end.
+    return f"""Plan one week of batch meal prep for a housekeeper who cooks for one adult in Los Angeles on Tuesdays and Fridays. Reply with only the JSON described at the end, after any web searches.
 
 TARGETS: every single portion (breakfast, main and dessert alike) must be {st['kcal']} kcal (within 5%) with at least {st['protein']} g protein.
 
@@ -52,6 +52,7 @@ RULES
 - Favourites (you may reuse at most one): {lst(favourites)}.
 - This week's request from the owner: {note.strip() or 'none'}.
 - Food safety: any portion eaten more than 3 days after it was cooked must be frozen on prep day and moved to the fridge the night before. Say so in that recipe's storage and portionNote.
+- You have a web_search tool (up to 8 searches). Use it to check the nutrition label or USDA figure for each recipe's main ingredients so every "kcal" and "protein" value is real, not estimated. Search first; the JSON comes last and nothing follows it.
 - Ingredient amounts are for the WHOLE batch, in US units with grams in brackets where useful. "kcal" and "protein" are for that whole-batch amount of that ingredient, from standard US nutrition labels. Before answering, check that the kcal total divided by portions hits the target and that protein does too; adjust amounts until both do.
 - Steps are short plain sentences a cook can follow: oven temperatures, times, doneness (chicken to 165°F), how to split into portions evenly (by weight), and labelling with the day to eat.
 
@@ -140,36 +141,72 @@ def call_model(prompt: str, on_text: Callable[[str], bool], transport: httpx.Bas
     if not cfg.anthropic_api_key:
         raise GenerationError("Menu generation isn't set up: add ANTHROPIC_API_KEY to the server's environment.")
     headers = {"x-api-key": cfg.anthropic_api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"}
-    # Claude 5 models default to adaptive thinking, which on this prompt spends the whole output
-    # budget thinking before any JSON is written; the menu needs those tokens for the JSON.
-    body = {"model": cfg.anthropic_model, "max_tokens": 16000, "stream": True, "thinking": {"type": "disabled"},
-            "messages": [{"role": "user", "content": prompt}]}
+    messages = [{"role": "user", "content": prompt}]
+    # Claude 5 models think before answering and that thinking counts toward max_tokens, so the budget
+    # has to cover ~20k of thinking as well as the JSON; web search lets the model read real nutrition
+    # labels instead of guessing the kcal and protein figures.
+    body = {"model": cfg.anthropic_model, "max_tokens": 64000, "stream": True,
+            "thinking": {"type": "adaptive"},
+            "tools": [{"type": "web_search_20260209", "name": "web_search", "max_uses": 8}],
+            "messages": messages}
     text, stop_reason = "", None
     timeout = httpx.Timeout(connect=15, read=180, write=30, pool=15)
     with httpx.Client(timeout=timeout, transport=transport) as client:
-        with client.stream("POST", API_URL, headers=headers, json=body) as resp:
-            if resp.status_code != 200:
-                resp.read()
-                raise GenerationError(_api_error_message(resp.status_code, resp.text))
-            for line in resp.iter_lines():
-                if not line.startswith("data:"):
-                    continue
-                try:
-                    ev = json.loads(line[5:].strip())
-                except ValueError:
-                    continue
-                t = ev.get("type")
-                if t == "content_block_delta" and ev.get("delta", {}).get("type") == "text_delta":
-                    text += ev["delta"].get("text", "")
-                    if not on_text(text):
-                        raise _Cancelled()
-                elif t == "message_delta":
-                    stop_reason = ev.get("delta", {}).get("stop_reason") or stop_reason
-                elif t == "error":
-                    raise GenerationError(_api_error_message(0, json.dumps(ev.get("error", {}))))
+        for _ in range(4):  # the first turn plus three continuations, each re-sending the reply so far
+            blocks, partials, stop_reason = {}, {}, None
+            with client.stream("POST", API_URL, headers=headers, json=body) as resp:
+                if resp.status_code != 200:
+                    resp.read()
+                    raise GenerationError(_api_error_message(resp.status_code, resp.text))
+                for line in resp.iter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    try:
+                        ev = json.loads(line[5:].strip())
+                    except ValueError:
+                        continue
+                    t, i = ev.get("type"), ev.get("index")
+                    if t == "content_block_start":
+                        blocks[i] = dict(ev.get("content_block") or {})
+                    elif t == "content_block_delta":
+                        delta = ev.get("delta") or {}
+                        if delta.get("type") == "text_delta":
+                            text += delta.get("text", "")
+                            if not on_text(text):
+                                raise _Cancelled()
+                        if i in blocks:
+                            partials[i] = _apply_delta(blocks[i], delta, partials.get(i, ""))
+                    elif t == "content_block_stop" and blocks.get(i, {}).get("type") == "server_tool_use":
+                        blocks[i]["input"] = json.loads(partials.get(i) or "{}")
+                    elif t == "message_delta":
+                        stop_reason = ev.get("delta", {}).get("stop_reason") or stop_reason
+                    elif t == "error":
+                        raise GenerationError(_api_error_message(0, json.dumps(ev.get("error", {}))))
+            if stop_reason != "pause_turn":
+                break
+            # A search can pause the turn: send back what the model wrote so far so it can carry on.
+            messages.append({"role": "assistant", "content": [blocks[i] for i in sorted(blocks)]})
     if stop_reason == "max_tokens":
         raise GenerationError("The menu was too long and got cut off. Try again, or ask for simpler recipes.")
+    if stop_reason == "pause_turn":
+        raise GenerationError("The menu run paused too many times while searching. Try again.")
     return text
+
+
+def _apply_delta(block: dict, delta: dict, partial: str) -> str:
+    """Rebuild one assistant content block from its deltas; returns its tool-input JSON so far."""
+    t = delta.get("type")
+    if t == "text_delta":
+        block["text"] = block.get("text", "") + delta.get("text", "")
+    elif t == "thinking_delta":
+        block["thinking"] = block.get("thinking", "") + delta.get("thinking", "")
+    elif t == "signature_delta":
+        block["signature"] = delta.get("signature", "")
+    elif t == "input_json_delta":
+        return partial + delta.get("partial_json", "")
+    elif t == "citations_delta":
+        block.setdefault("citations", []).append(delta.get("citation"))
+    return partial
 
 
 def _api_error_message(status: int, body: str) -> str:
@@ -181,9 +218,9 @@ def _api_error_message(status: int, body: str) -> str:
         return "Claude is busy right now. Try again in a few minutes."
     if status == 400 and "credit" in body.lower():
         return "Your Anthropic account is out of credit."
-    if status == 400 and "thinking.type.disabled" in body:
-        return ("This model can't run with thinking switched off. Set ANTHROPIC_MODEL to claude-sonnet-5 "
-                "(the default) or another model that allows it.")
+    if status == 400 and "thinking.type.adaptive" in body:
+        return ("This model can't run with adaptive thinking. Set ANTHROPIC_MODEL to a Claude 5 model such as "
+                "claude-opus-5-5 (the default).")
     return f"The Claude API returned an error ({status or 'stream'}). Try again."
 
 
