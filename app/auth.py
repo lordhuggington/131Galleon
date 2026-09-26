@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import re
 import secrets
 import sqlite3
 import threading
@@ -14,8 +15,9 @@ from .config import get_config
 from .db import now_iso
 
 COOKIE_NAME = "hrs_session"
-ROLES = ("homeowner", "housekeeper")
+ROLES = ("owner", "staff")
 MIN_PASSWORD_LEN = 10
+_NANP_RE = re.compile(r"^[2-9][0-9]{9}$")  # a North American number without its country code
 
 _SCRYPT_N, _SCRYPT_R, _SCRYPT_P = 2**15, 8, 1
 
@@ -46,6 +48,26 @@ def password_problem(password: str) -> str | None:
     return None
 
 
+def normalize_phone(raw: str) -> str:
+    """Turn messy user input into E.164 ('+13105551234'). Store and compare only this form."""
+    from .api import ApiError  # imported here: app.api imports this module at start-up
+
+    text = (raw or "").strip()
+    # ASCII digits only: \d would also keep Unicode digits (٣, ３), which are not phone digits.
+    digits = re.sub(r"[^0-9]", "", text)
+    plus = text.startswith("+")
+    if digits.startswith("1") and (plus or len(digits) == 11):
+        # A leading 1, typed or as '+1', means North America: the country code plus 10 digits, no more.
+        if len(digits) == 11 and _NANP_RE.match(digits[1:]):
+            return "+" + digits
+    elif plus:
+        if 8 <= len(digits) <= 15:  # some other country, whose numbering plan we can't check
+            return "+" + digits
+    elif _NANP_RE.match(digits):
+        return "+1" + digits
+    raise ApiError(400, "Enter a mobile number like (310) 555-1234.")
+
+
 def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
@@ -67,7 +89,8 @@ def user_for_token(conn: sqlite3.Connection, token: str | None) -> sqlite3.Row |
     if not token:
         return None
     return conn.execute(
-        """SELECT u.id, u.username, u.display_name, u.role FROM sessions s
+        """SELECT u.id, u.username, u.display_name, u.role, u.label, u.phone, u.door_code, u.can_see_meals
+           FROM sessions s
            JOIN users u ON u.id = s.user_id
            WHERE s.token_hash = ? AND s.expires_at > ? AND u.active = 1""",
         (_token_hash(token), now_iso()),
@@ -111,3 +134,10 @@ class LoginThrottle:
 
 
 throttle = LoginThrottle()
+# Failed sign-in-code attempts, keyed by phone number. Deliberately a separate instance from
+# `throttle`: usernames have no charset restriction, so sharing one would let anyone lock a
+# phone out of text-message sign-in by posting /api/login with that number as the username.
+sms_check_throttle = LoginThrottle()
+# Rate limit on outgoing texts, keyed by phone number: 3 sends per 10 minutes. Unlike `throttle`
+# this is never reset by a success — it is a rate limit, not a lockout.
+send_throttle = LoginThrottle(limit=3, window=600)

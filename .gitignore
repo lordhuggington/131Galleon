@@ -1,5 +1,6 @@
 .env
 data/
+static/
 backups/
 *.db
 *.db-wal
@@ -8,3 +9,5 @@ __pycache__/
 *.pyc
 .venv/
 .DS_Store
+.superpowers/
+.playwright-mcp/

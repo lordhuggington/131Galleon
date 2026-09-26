@@ -19,6 +19,15 @@ class Config:
     anthropic_model: str
     cookie_secure: bool
     session_days: int
+    twilio_account_sid: str
+    twilio_auth_token: str
+    twilio_verify_service_sid: str
+    photos_dir: str
+
+    @property
+    def sms_enabled(self) -> bool:
+        """Text-message sign-in works only when all three Twilio values are set."""
+        return bool(self.twilio_account_sid and self.twilio_auth_token and self.twilio_verify_service_sid)
 
 
 def get_config() -> Config:
@@ -28,4 +37,8 @@ def get_config() -> Config:
         anthropic_model=os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5"),
         cookie_secure=_bool("HRS_COOKIE_SECURE", True),
         session_days=int(os.environ.get("HRS_SESSION_DAYS", "30")),
+        twilio_account_sid=os.environ.get("TWILIO_ACCOUNT_SID", "").strip(),
+        twilio_auth_token=os.environ.get("TWILIO_AUTH_TOKEN", "").strip(),
+        twilio_verify_service_sid=os.environ.get("TWILIO_VERIFY_SERVICE_SID", "").strip(),
+        photos_dir=os.environ.get("HRS_PHOTOS_DIR", "data/photos"),
     )

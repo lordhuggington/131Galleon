@@ -1,0 +1,30 @@
+:root {
+  color-scheme: light;
+  --bg: #FFF3E0;          /* page background, warm cream */
+  --surface: #FDF1DC;     /* cards */
+  --surface-2: #F6E4C6;   /* card headers, subtle fills */
+  --line: #E7C9A1;        /* borders */
+  --ink: #5A3E36;         /* body text, dark cocoa */
+  --muted: #8C6B4F;       /* secondary text */
+  --teal: #1C7C8C;        /* primary actions, banners, checked state */
+  --teal-deep: #155E6B;
+  --teal-soft: #D5EBEE;
+  --orange: #E76F2C;      /* accent, active nav, progress bars */
+  --orange-soft: #FBDCC8;
+  --rust: #B14A2E;        /* headings inside cards, danger */
+  --rust-soft: #F8DCD0;
+  /* --sun, --sand, --sky and --sunset are also hard-coded inside components/illustrations/*.tsx (spec Appendix A); change both. */
+  --sun: #FFE8B0;
+  --sand: #E9C89B;
+  --sky: #9AD4D6;
+  --sunset: linear-gradient(180deg, #FFCE7B 0%, #FF9E64 55%, #F2708A 100%);
+  --display: "Shrikhand", "Cooper Black", Georgia, serif;
+  --body: "Quicksand", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --r: 14px;              /* card radius */
+  --r-sm: 10px;
+  --on-accent: #FFF3E0;   /* text on teal/ink fills (buttons, chips, banners, toast) */
+  --shadow-text: rgba(90, 62, 54, .35);   /* text-shadow on the sunset band */
+  --shadow-lift: rgba(90, 62, 54, .10);   /* bottom nav lift */
+  --shadow-scrim: rgba(90, 62, 54, .55);  /* dialog backdrop */
+}

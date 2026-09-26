@@ -1,9 +1,17 @@
+FROM node:22-alpine AS frontend
+WORKDIR /build
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend ./
+RUN npm run build            # outDir ../static, so this writes /static
+
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     TZ=America/Los_Angeles \
-    HRS_DB_PATH=/data/house.db
+    HRS_DB_PATH=/data/house.db \
+    HRS_PHOTOS_DIR=/data/photos
 
 WORKDIR /app
 COPY requirements.txt .
@@ -13,8 +21,8 @@ RUN pip install --no-cache-dir -r requirements.txt \
 
 COPY app ./app
 COPY migrations ./migrations
-COPY static ./static
 COPY seed ./seed
+COPY --from=frontend /static ./static
 
 USER hrs
 EXPOSE 8000

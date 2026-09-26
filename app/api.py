@@ -1,28 +1,38 @@
 """JSON API. Every handler runs in a worker thread with its own SQLite connection."""
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import secrets
 from datetime import date
+from pathlib import Path
 from typing import Any, Callable
 
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Route
 
-from . import ai, store
+from . import ai, sms, store
 from .auth import (COOKIE_NAME, ROLES, create_session, delete_session, delete_user_sessions, hash_password,
-                   password_problem, throttle, user_for_token, verify_password)
+                   normalize_phone, password_problem, send_throttle, sms_check_throttle, throttle, user_for_token,
+                   verify_password)
 from .config import get_config
 from .db import connect, now_iso, tx
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+CODE_RE = re.compile(r"^\d{4,10}$")
+USERNAME_RE = re.compile(r"^[a-z0-9._-]{2,64}$")
+DOOR_CODE_RE = re.compile(r"^[0-9]{4,8}$")  # ASCII only: a keypad has no Unicode digits
 FREQS = ("visit", "weekly", "fortnightly", "monthly")
 DAYS = ("any", "tue", "fri")
 SESSIONS = ("tue", "fri")
 SLOTS = ("breakfast", "main", "dessert")
+PHOTO_KINDS = ("done", "fix")
+PHOTO_MAX_BYTES = 8 * 1024 * 1024
+PHOTO_NAME_RE = re.compile(r"^[0-9a-f]{32}\.jpg$")
+JPEG_MAGIC = b"\xff\xd8\xff"
 _DUMMY_HASH = hash_password(secrets.token_hex(16))  # equalises login timing for unknown usernames
 
 
@@ -36,14 +46,35 @@ def err(status: int, message: str) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=status)
 
 
-def endpoint(role: str | None = None, public: bool = False):
-    """Wrap a sync handler(request, conn, user, body) with auth, CSRF header check, JSON parsing and errors."""
+def endpoint(role: str | None = None, public: bool = False, raw_body: bool = False,
+             max_bytes: int | None = None):
+    """Wrap a sync handler(request, conn, user, body) with auth, CSRF header check, JSON parsing and errors.
+
+    raw_body=True skips JSON parsing and passes the request body straight through as bytes (photo uploads).
+    max_bytes caps a raw body before it is buffered: an oversized Content-Length is refused unread, and a
+    chunked body is abandoned as soon as it goes over. Both happen before the session lookup, so an
+    anonymous request can't make a worker hold an arbitrary amount of memory.
+    """
     def deco(fn: Callable[..., Any]):
         async def handler(request: Request) -> Response:
             if request.method not in ("GET", "HEAD") and request.headers.get("x-hrs") != "1":
                 return err(403, "Missing X-HRS request header.")
-            body: dict = {}
-            if request.method in ("POST", "PUT", "PATCH"):
+            body: Any = b"" if raw_body else {}
+            if raw_body and max_bytes is not None:
+                declared = request.headers.get("content-length", "")
+                if declared.isdigit() and int(declared) > max_bytes:
+                    return err(413, "That photo is too large.")
+                chunks: list[bytes] = []
+                total = 0
+                async for chunk in request.stream():
+                    total += len(chunk)
+                    if total > max_bytes:
+                        return err(413, "That photo is too large.")  # stop reading; don't keep the rest
+                    chunks.append(chunk)
+                body = b"".join(chunks)
+            elif raw_body:
+                body = await request.body()
+            elif request.method in ("POST", "PUT", "PATCH"):
                 raw = await request.body()
                 if raw:
                     try:
@@ -62,7 +93,7 @@ def endpoint(role: str | None = None, public: bool = False):
                         if not user:
                             return err(401, "Please sign in.")
                         if role and user["role"] != role:
-                            return err(403, "Only the homeowner can do that.")
+                            return err(403, "Only an owner can do that.")
                     result = fn(request, conn, user, body)
                     return result if isinstance(result, Response) else JSONResponse(result)
                 except ApiError as e:
@@ -130,10 +161,21 @@ def path_week(request: Request) -> str:
 
 
 def me_dict(u) -> dict:
-    return {"id": u["id"], "username": u["username"], "displayName": u["display_name"], "role": u["role"]}
+    """The signed-in person's own record. doorCode is only ever their own."""
+    return {"id": u["id"], "username": u["username"], "displayName": u["display_name"], "role": u["role"],
+            "label": u["label"], "phone": u["phone"], "doorCode": u["door_code"],
+            "canSeeMeals": u["role"] == "owner" or bool(u["can_see_meals"])}
 
 
 # ---------- auth ----------
+def _session_response(conn, row) -> JSONResponse:
+    token, max_age = create_session(conn, row["id"])
+    resp = JSONResponse({"me": me_dict(row)})
+    resp.set_cookie(COOKIE_NAME, token, max_age=max_age, httponly=True, secure=get_config().cookie_secure,
+                    samesite="lax", path="/")
+    return resp
+
+
 @endpoint(public=True)
 def login(request, conn, _user, body):
     username = s(body, "username", 64, required=True).lower()
@@ -141,16 +183,71 @@ def login(request, conn, _user, body):
     if throttle.blocked(username):
         return err(429, "Too many failed attempts. Wait 15 minutes and try again.")
     row = conn.execute("SELECT * FROM users WHERE username = ? AND active = 1", (username,)).fetchone()
-    ok = verify_password(password, row["password_hash"] if row else _DUMMY_HASH) and row is not None
+    # Password sign-in is for owners, plus staff who have no phone on file yet (so the v2 upgrade
+    # can't lock anyone out). Always run scrypt so unknown usernames take the same time.
+    stored = row["password_hash"] if row and row["password_hash"] else _DUMMY_HASH
+    ok = verify_password(password, stored)
+    if not row or not row["password_hash"] or not (row["role"] == "owner" or row["phone"] is None):
+        ok = False
     if not ok:
         throttle.fail(username)
         return err(401, "Wrong username or password.")
     throttle.reset(username)
-    token, max_age = create_session(conn, row["id"])
-    resp = JSONResponse({"me": me_dict(row)})
-    resp.set_cookie(COOKIE_NAME, token, max_age=max_age, httponly=True, secure=get_config().cookie_secure,
-                    samesite="lax", path="/")
-    return resp
+    return _session_response(conn, row)
+
+
+@endpoint(public=True)
+def login_options(request, conn, _user, _body):
+    return {"sms": get_config().sms_enabled}
+
+
+@endpoint(public=True)
+def login_sms_start(request, conn, _user, body):
+    phone = normalize_phone(body.get("phone") if isinstance(body.get("phone"), str) else "")
+    if not get_config().sms_enabled:
+        return JSONResponse({"error": "Text-message sign-in isn't set up.", "smsUnavailable": True}, status_code=503)
+    if send_throttle.blocked(phone):
+        return err(429, "Too many codes sent to that number. Wait 10 minutes.")
+    send_throttle.fail(phone)  # counted whether or not we actually text, so timing can't leak
+    row = conn.execute("SELECT id FROM users WHERE phone = ? AND active = 1", (phone,)).fetchone()
+    if row:
+        try:
+            sms.start_verification(phone)
+        except sms.SmsError:
+            # Swallowed on purpose: start_verification only runs for a number that IS on file, so
+            # any distinct answer here — even a generic 502 — would confirm membership. app/sms.py
+            # has already logged the failure (with the number redacted); add nothing.
+            pass
+    # One answer for every case: on file or not, texted or not. No enumeration oracle in the response —
+    # but a number that is on file costs a Twilio round trip and one that isn't costs nothing, so the
+    # timing still tells an attacker (3 probes per number per 10 minutes, each one texting a real
+    # person). Closing that means sending off the request path, which v2 deliberately doesn't do.
+    return {"ok": True}
+
+
+@endpoint(public=True)
+def login_sms_check(request, conn, _user, body):
+    phone = normalize_phone(body.get("phone") if isinstance(body.get("phone"), str) else "")
+    code = s(body, "code", 10, required=True)
+    if not CODE_RE.match(code):
+        raise ApiError(400, "Enter the 6-digit code from the text message.")
+    if not get_config().sms_enabled:
+        # Without a Verify service SID the check would hit a bogus URL and read as "wrong code".
+        return JSONResponse({"error": "Text-message sign-in isn't set up.", "smsUnavailable": True}, status_code=503)
+    if sms_check_throttle.blocked(phone):
+        return err(429, "Too many failed attempts. Wait 15 minutes and try again.")
+    row = conn.execute("SELECT * FROM users WHERE phone = ? AND active = 1", (phone,)).fetchone()
+    ok = False
+    if row:
+        try:
+            ok = sms.check_verification(phone, code)
+        except sms.SmsError as e:
+            return err(502, str(e))
+    if not ok:
+        sms_check_throttle.fail(phone)
+        return err(401, "That code isn't right or has expired.")
+    sms_check_throttle.reset(phone)
+    return _session_response(conn, row)
 
 
 @endpoint(public=True)
@@ -168,10 +265,12 @@ def me(request, conn, user, _body):
 
 @endpoint()
 def change_my_password(request, conn, user, body):
+    if user["role"] != "owner":
+        raise ApiError(400, "Staff sign in by text message and don't have a password.")
     current = body.get("current") if isinstance(body.get("current"), str) else ""
     new = body.get("new") if isinstance(body.get("new"), str) else ""
     row = conn.execute("SELECT password_hash FROM users WHERE id = ?", (user["id"],)).fetchone()
-    if not verify_password(current, row["password_hash"]):
+    if not verify_password(current, row["password_hash"] or ""):
         raise ApiError(400, "Your current password is wrong.")
     if problem := password_problem(new):
         raise ApiError(400, problem)
@@ -183,11 +282,15 @@ def change_my_password(request, conn, user, body):
 # ---------- state (polled by the page) ----------
 @endpoint()
 def state(request, conn, user, _body):
-    return {"me": me_dict(user), "tasks": store.list_tasks(conn), "visits": store.list_visits(conn),
-            "settings": store.get_settings(conn)}
+    # Someone who can't see meals gets the default settings, not the household's: same shape for the
+    # page to render, none of the kcal targets, likes, dislikes or pantry. The prep-coverage days are
+    # the exception — the Visit screen shows those to everyone, so they must be the real ones.
+    me = me_dict(user)
+    return {"me": me, "tasks": store.list_tasks(conn), "visits": store.list_visits(conn),
+            "settings": store.visible_settings(conn, me["canSeeMeals"])}
 
 
-# ---------- tasks (homeowner) ----------
+# ---------- tasks (owner) ----------
 def _task_fields(body: dict, partial: bool) -> dict:
     out = {}
     if not partial or "title" in body:
@@ -203,7 +306,7 @@ def _task_fields(body: dict, partial: bool) -> dict:
     return out
 
 
-@endpoint(role="homeowner")
+@endpoint(role="owner")
 def create_task(request, conn, user, body):
     f = _task_fields(body, partial=False)
     tid = "t" + secrets.token_hex(4)
@@ -212,7 +315,7 @@ def create_task(request, conn, user, body):
     return {"task": store.task_dict(conn.execute("SELECT * FROM tasks WHERE id = ?", (tid,)).fetchone())}
 
 
-@endpoint(role="homeowner")
+@endpoint(role="owner")
 def update_task(request, conn, user, body):
     tid = request.path_params["task_id"]
     f = _task_fields(body, partial=True)
@@ -225,7 +328,7 @@ def update_task(request, conn, user, body):
     return {"task": store.task_dict(conn.execute("SELECT * FROM tasks WHERE id = ?", (tid,)).fetchone())}
 
 
-@endpoint(role="homeowner")
+@endpoint(role="owner")
 def delete_task(request, conn, user, _body):
     cur = conn.execute("UPDATE tasks SET active = 0, updated_at = ? WHERE id = ?", (now_iso(), request.path_params["task_id"]))
     if cur.rowcount == 0:
@@ -258,7 +361,7 @@ def set_visit_note(request, conn, user, body):
     return {"ok": True}
 
 
-@endpoint(role="homeowner")
+@endpoint(role="owner")
 def add_extra(request, conn, user, body):
     d = path_date(request)
     title, notes = s(body, "title", 200, required=True), s(body, "notes", 500)
@@ -285,15 +388,87 @@ def set_extra_done(request, conn, user, body):
     return {"ok": True}
 
 
-@endpoint(role="homeowner")
+@endpoint(role="owner")
 def delete_extra(request, conn, user, _body):
     d, eid = path_date(request), _extra_id(request)
     conn.execute("DELETE FROM visit_extras WHERE id = ? AND visit_date = ?", (eid, d))
     return {"ok": True}
 
 
+# ---------- photos ----------
+def _photos_dir() -> Path:
+    return Path(get_config().photos_dir)
+
+
+def _photo_dict(r, display_name: str) -> dict:
+    return {"id": r["id"], "kind": r["kind"], "caption": r["caption"], "url": f"/photos/{r['filename']}",
+            "createdAt": r["created_at"], "by": {"id": r["created_by"], "displayName": display_name}}
+
+
+@endpoint(raw_body=True, max_bytes=PHOTO_MAX_BYTES)
+def add_photo(request, conn, user, body):
+    d = path_date(request)
+    kind = request.query_params.get("kind", "done")
+    if kind not in PHOTO_KINDS:
+        raise ApiError(400, f"'kind' must be one of: {', '.join(PHOTO_KINDS)}.")
+    caption = (request.query_params.get("caption") or "").strip()
+    if len(caption) > 300:
+        raise ApiError(400, "'caption' is too long (max 300 characters).")
+    if len(body) > PHOTO_MAX_BYTES:  # defence in depth: endpoint(max_bytes=…) already refused it unread
+        raise ApiError(413, "That photo is too large.")
+    if not body.startswith(JPEG_MAGIC):
+        raise ApiError(415, "Only JPEG photos are accepted.")
+    filename = secrets.token_hex(16) + ".jpg"  # never derived from user input
+    directory = _photos_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / filename).write_bytes(body)
+    cur = conn.execute(
+        """INSERT INTO visit_photos (visit_date, kind, caption, filename, bytes, created_at, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""", (d, kind, caption, filename, len(body), now_iso(), user["id"]))
+    row = conn.execute("SELECT * FROM visit_photos WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return {"photo": _photo_dict(row, user["display_name"])}
+
+
+@endpoint()
+def get_photo(request, conn, user, _body):
+    """Served from outside /api/ so the no-store header doesn't apply; still needs the session cookie."""
+    name = request.path_params["filename"]
+    missing = ApiError(404, "That photo doesn't exist.")
+    if not PHOTO_NAME_RE.match(name):
+        raise missing
+    if not conn.execute("SELECT 1 FROM visit_photos WHERE filename = ?", (name,)).fetchone():
+        raise missing
+    path = _photos_dir() / name
+    if not path.is_file():
+        raise missing
+    return FileResponse(path, media_type="image/jpeg",
+                        headers={"Cache-Control": "private, max-age=604800, immutable"})
+
+
+@endpoint()
+def delete_photo(request, conn, user, _body):
+    d = path_date(request)
+    try:
+        pid = int(request.path_params["photo_id"])
+    except ValueError:
+        raise ApiError(404, "That photo doesn't exist.")
+    row = conn.execute("SELECT * FROM visit_photos WHERE id = ? AND visit_date = ?", (pid, d)).fetchone()
+    if not row:
+        raise ApiError(404, "That photo doesn't exist.")
+    if user["role"] != "owner" and row["created_by"] != user["id"]:
+        raise ApiError(403, "You can only delete your own photos.")
+    conn.execute("DELETE FROM visit_photos WHERE id = ?", (pid,))
+    # The row is the source of truth: it's gone, so the photo is unreachable whatever happens to the
+    # file. Re-check the stored name (a hand-edited row shouldn't be able to aim the unlink) and let an
+    # unlink failure pass — the worst case is an orphaned file nothing can serve.
+    if PHOTO_NAME_RE.match(row["filename"]):
+        with contextlib.suppress(OSError):
+            (_photos_dir() / row["filename"]).unlink(missing_ok=True)
+    return {"ok": True}
+
+
 # ---------- settings ----------
-@endpoint(role="homeowner")
+@endpoint(role="owner")
 def put_settings(request, conn, user, body):
     out = {"kcal": num(body, "kcal", 200, 1500), "protein": num(body, "protein", 10, 150)}
     for k in SESSIONS:
@@ -311,16 +486,18 @@ def put_settings(request, conn, user, body):
 # ---------- meal plans ----------
 @endpoint()
 def get_plan(request, conn, user, _body):
-    return {"plan": store.get_plan(conn, path_week(request), include_shopping=user["role"] == "homeowner")}
+    if user["role"] != "owner" and not user["can_see_meals"]:
+        raise ApiError(403, "Meals aren't turned on for you.")
+    return {"plan": store.get_plan(conn, path_week(request), include_shopping=user["role"] == "owner")}
 
 
-@endpoint(role="homeowner")
+@endpoint(role="owner")
 def delete_plan(request, conn, user, _body):
     conn.execute("DELETE FROM meal_plans WHERE week = ?", (path_week(request),))
     return {"ok": True}
 
 
-@endpoint(role="homeowner")
+@endpoint(role="owner")
 def set_fav(request, conn, user, body):
     w = path_week(request)
     sess, slot = request.path_params["session"], request.path_params["slot"]
@@ -332,7 +509,7 @@ def set_fav(request, conn, user, body):
     return {"ok": True}
 
 
-@endpoint(role="homeowner")
+@endpoint(role="owner")
 def set_got(request, conn, user, body):
     w = path_week(request)
     cur = conn.execute("UPDATE shopping_items SET got = ? WHERE week = ? AND id = ?",
@@ -342,7 +519,7 @@ def set_got(request, conn, user, body):
     return {"ok": True}
 
 
-@endpoint(role="homeowner")
+@endpoint(role="owner")
 def generate(request, conn, user, body):
     w = path_week(request)
     note = s(body, "note", 500)
@@ -359,7 +536,7 @@ def _job_id(request) -> int:
         raise ApiError(404, "That job doesn't exist.")
 
 
-@endpoint(role="homeowner")
+@endpoint(role="owner")
 def get_job(request, conn, user, _body):
     r = conn.execute("SELECT * FROM ai_jobs WHERE id = ?", (_job_id(request),)).fetchone()
     if not r:
@@ -368,41 +545,96 @@ def get_job(request, conn, user, _body):
             "titles": json.loads(r["titles"]), "error": r["error"]}
 
 
-@endpoint(role="homeowner")
+@endpoint(role="owner")
 def cancel_job(request, conn, user, _body):
     conn.execute("UPDATE ai_jobs SET status = 'cancelling' WHERE id = ? AND status = 'running'", (_job_id(request),))
     return {"ok": True}
 
 
-# ---------- people (homeowner) ----------
+# ---------- people (owner) ----------
 def user_dict(r) -> dict:
     return {"id": r["id"], "username": r["username"], "displayName": r["display_name"], "role": r["role"],
-            "active": bool(r["active"])}
+            "label": r["label"], "phone": r["phone"], "doorCode": r["door_code"],
+            "canSeeMeals": bool(r["can_see_meals"]), "active": bool(r["active"]),
+            "hasPassword": bool(r["password_hash"])}
 
 
-@endpoint(role="homeowner")
+def _derive_username(conn, display: str) -> str:
+    """Make a username from a display name: lower-case [a-z0-9.], then -2, -3… until it's free."""
+    base = re.sub(r"[^a-z0-9.]", "", display.lower())[:56] or "person"
+    name, n = base, 1
+    while conn.execute("SELECT 1 FROM users WHERE username = ?", (name,)).fetchone():
+        n += 1
+        name = f"{base}-{n}"
+    return name
+
+
+def _phone_field(body: dict, conn, exclude_id: int | None) -> str | None:
+    """Normalized phone from the body, or None when blank. Raises 409 if someone else has it."""
+    raw = body.get("phone")
+    if not isinstance(raw, str) or not raw.strip():
+        return None  # NULL, never '': the UNIQUE index would collide on the second blank
+    phone = normalize_phone(raw)
+    if exclude_id is None:
+        row = conn.execute("SELECT display_name FROM users WHERE phone = ?", (phone,)).fetchone()
+    else:
+        row = conn.execute("SELECT display_name FROM users WHERE phone = ? AND id != ?", (phone, exclude_id)).fetchone()
+    if row:
+        raise ApiError(409, f"That phone number is already used by {row['display_name']}.")
+    return phone
+
+
+def _door_code_field(body: dict) -> str | None:
+    raw = body.get("doorCode")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    code = raw.strip()
+    if not DOOR_CODE_RE.match(code):
+        raise ApiError(400, "A door code is 4 to 8 digits.")
+    return code
+
+
+@endpoint(role="owner")
 def list_users(request, conn, user, _body):
     return {"users": [user_dict(r) for r in conn.execute("SELECT * FROM users ORDER BY role, display_name")]}
 
 
-@endpoint(role="homeowner")
+@endpoint(role="owner")
 def create_user(request, conn, user, body):
-    username = s(body, "username", 64, required=True).lower()
-    if not re.match(r"^[a-z0-9._-]{2,64}$", username):
-        raise ApiError(400, "Usernames use letters, numbers, dots, dashes or underscores.")
     display = s(body, "displayName", 80, required=True)
-    role = choice(body, "role", ROLES, "housekeeper")
+    role = choice(body, "role", ROLES, "staff")
+    label = s(body, "label", 40)
+    phone = _phone_field(body, conn, None)
+    door_code = _door_code_field(body)
+    can_see_meals = boolean(body, "canSeeMeals") if "canSeeMeals" in body else True
+    username = s(body, "username", 64).lower()
+    if username:
+        if not USERNAME_RE.match(username):
+            raise ApiError(400, "Usernames use letters, numbers, dots, dashes or underscores.")
+        if conn.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone():
+            raise ApiError(409, "That username is taken.")
+    else:
+        username = _derive_username(conn, display)
     password = body.get("password") if isinstance(body.get("password"), str) else ""
-    if problem := password_problem(password):
-        raise ApiError(400, problem)
-    if conn.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone():
-        raise ApiError(409, "That username is taken.")
-    cur = conn.execute("INSERT INTO users (username, display_name, role, password_hash, created_at) VALUES (?, ?, ?, ?, ?)",
-                       (username, display, role, hash_password(password), now_iso()))
+    pw_hash = None
+    if role != "owner" and phone and password:
+        # Say so rather than dropping it: login() would never accept this password, so storing a hash
+        # would leave an unusable credential behind and the client would get no hint it was ignored.
+        raise ApiError(400, "They sign in by text, so they don't need a password.")
+    # Owners always have a password. Staff sign in by text, so one is only kept for staff who have no
+    # phone yet: login() refuses a password from staff who do, so that hash could never be used again.
+    if role == "owner" or (password and not phone):
+        if problem := password_problem(password):
+            raise ApiError(400, problem)
+        pw_hash = hash_password(password)
+    cur = conn.execute(
+        """INSERT INTO users (username, display_name, role, label, phone, door_code, can_see_meals, password_hash, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (username, display, role, label, phone, door_code, 1 if can_see_meals else 0, pw_hash, now_iso()))
     return {"user": user_dict(conn.execute("SELECT * FROM users WHERE id = ?", (cur.lastrowid,)).fetchone())}
 
 
-@endpoint(role="homeowner")
+@endpoint(role="owner")
 def update_user(request, conn, user, body):
     try:
         uid = int(request.path_params["user_id"])
@@ -411,18 +643,45 @@ def update_user(request, conn, user, body):
     target = conn.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
     if not target:
         raise ApiError(404, "That person doesn't exist.")
+    new_role = choice(body, "role", ROLES) if "role" in body else target["role"]
     with tx(conn):
         if "displayName" in body:
             conn.execute("UPDATE users SET display_name = ? WHERE id = ?", (s(body, "displayName", 80, required=True), uid))
+        if "label" in body:
+            conn.execute("UPDATE users SET label = ? WHERE id = ?", (s(body, "label", 40), uid))
+        if "canSeeMeals" in body:
+            conn.execute("UPDATE users SET can_see_meals = ? WHERE id = ?", (1 if boolean(body, "canSeeMeals") else 0, uid))
+        if "doorCode" in body:
+            conn.execute("UPDATE users SET door_code = ? WHERE id = ?", (_door_code_field(body), uid))
+        new_phone = target["phone"]
+        if "phone" in body:
+            new_phone = _phone_field(body, conn, uid)
+            conn.execute("UPDATE users SET phone = ? WHERE id = ?", (new_phone, uid))
         if "role" in body or "active" in body:
-            role = choice(body, "role", ROLES) if "role" in body else target["role"]
             active = boolean(body, "active") if "active" in body else bool(target["active"])
-            if uid == user["id"] and (role != "homeowner" or not active):
-                raise ApiError(400, "You can't remove your own homeowner access.")
-            conn.execute("UPDATE users SET role = ?, active = ? WHERE id = ?", (role, 1 if active else 0, uid))
+            if uid == user["id"] and (new_role != "owner" or not active):
+                raise ApiError(400, "You can't remove your own owner access.")
+            # Owners always have a password (§3.1): without one they can neither sign in by password nor
+            # by text, so a promotion has to bring a password with it unless they kept an old hash.
+            if "role" in body and new_role == "owner" and target["password_hash"] is None \
+                    and not isinstance(body.get("password"), str):
+                raise ApiError(400, "Give them a password when you make them an owner.")
+            conn.execute("UPDATE users SET role = ?, active = ? WHERE id = ?", (new_role, 1 if active else 0, uid))
             if not active:
                 delete_user_sessions(conn, uid)
+        phone_changed = "phone" in body and new_phone != target["phone"]
+        became_staff = "role" in body and new_role != "owner" and target["role"] == "owner"
+        if new_phone and new_role != "owner" and (phone_changed or became_staff):
+            # This change *moved* them to staff-with-phone, whether it gave them the phone or took away
+            # the owner role: they sign in by text from now on, so the password that login() will no
+            # longer accept goes, and the sessions it opened go with it. Only a real transition counts —
+            # the People form re-submits every field on Save, and re-sending the number someone already
+            # has must not sign them out mid-visit.
+            conn.execute("UPDATE users SET password_hash = NULL WHERE id = ?", (uid,))
+            delete_user_sessions(conn, uid)
         if "password" in body:
+            if new_role != "owner":
+                raise ApiError(400, "Staff sign in by text message and don't have a password.")
             pw = body.get("password") if isinstance(body.get("password"), str) else ""
             if problem := password_problem(pw):
                 raise ApiError(400, problem)
@@ -439,6 +698,9 @@ async def healthz(request: Request) -> Response:
 routes = [
     Route("/healthz", healthz),
     Route("/api/login", login, methods=["POST"]),
+    Route("/api/login/options", login_options),
+    Route("/api/login/sms/start", login_sms_start, methods=["POST"]),
+    Route("/api/login/sms/check", login_sms_check, methods=["POST"]),
     Route("/api/logout", logout, methods=["POST"]),
     Route("/api/me", me),
     Route("/api/me/password", change_my_password, methods=["PUT"]),
@@ -451,6 +713,8 @@ routes = [
     Route("/api/visits/{date}/extras", add_extra, methods=["POST"]),
     Route("/api/visits/{date}/extras/{extra_id}", set_extra_done, methods=["PATCH"]),
     Route("/api/visits/{date}/extras/{extra_id}", delete_extra, methods=["DELETE"]),
+    Route("/api/visits/{date}/photos", add_photo, methods=["POST"]),
+    Route("/api/visits/{date}/photos/{photo_id}", delete_photo, methods=["DELETE"]),
     Route("/api/settings", put_settings, methods=["PUT"]),
     Route("/api/plans/{week}", get_plan),
     Route("/api/plans/{week}", delete_plan, methods=["DELETE"]),
@@ -462,4 +726,5 @@ routes = [
     Route("/api/users", list_users),
     Route("/api/users", create_user, methods=["POST"]),
     Route("/api/users/{user_id}", update_user, methods=["PATCH"]),
+    Route("/photos/{filename}", get_photo),
 ]

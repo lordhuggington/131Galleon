@@ -1,8 +1,11 @@
 """Admin commands.
 
     python -m app.cli migrate
-    python -m app.cli create-user --username owen --name "Owen" --role homeowner
-    python -m app.cli set-password --username owen
+    python -m app.cli create-user --username owen --name "Owen" --role owner
+    python -m app.cli create-user --username maria --name "Maria" --role staff --label Housekeeper
+    python -m app.cli set-password --username owen          # owners, or staff with no phone on file
+    python -m app.cli set-phone --username maria --phone "(310) 555-1234"
+    python -m app.cli set-phone --username maria --clear    # back to a password if Twilio is down
     python -m app.cli import-seed seed/
 """
 from __future__ import annotations
@@ -10,11 +13,13 @@ from __future__ import annotations
 import argparse
 import getpass
 import json
+import sqlite3
 import sys
 from pathlib import Path
 
 from . import store
-from .auth import ROLES, hash_password, password_problem
+from .api import DOOR_CODE_RE, ApiError
+from .auth import ROLES, hash_password, normalize_phone, password_problem
 from .db import connect, migrate, now_iso, tx
 
 
@@ -30,6 +35,19 @@ def _ask_password() -> str:
         return pw
 
 
+def _normalize(phone: str) -> str:
+    try:
+        return normalize_phone(phone)
+    except ApiError as e:
+        sys.exit(e.message)
+
+
+def _checked_hash(password: str) -> str:
+    if problem := password_problem(password):
+        sys.exit(problem)
+    return hash_password(password)
+
+
 def cmd_migrate(args, conn) -> None:
     print(f"Schema version {migrate(conn)}")
 
@@ -39,26 +57,73 @@ def cmd_create_user(args, conn) -> None:
     username = args.username.strip().lower()
     if conn.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone():
         sys.exit(f"User '{username}' already exists. Use set-password to change the password.")
-    pw = args.password or _ask_password()
-    if problem := password_problem(pw):
-        sys.exit(problem)
-    conn.execute("INSERT INTO users (username, display_name, role, password_hash, created_at) VALUES (?, ?, ?, ?, ?)",
-                 (username, args.name or username, args.role, hash_password(pw), now_iso()))
+    phone = _normalize(args.phone) if args.phone else None
+    door_code = (args.door_code or "").strip() or None
+    if door_code and not DOOR_CODE_RE.match(door_code):
+        sys.exit("A door code is 4 to 8 digits.")
+    pw_hash = None
+    if args.role == "owner":
+        pw_hash = _checked_hash(args.password or _ask_password())  # owners keep a password as an emergency fallback
+    elif args.password and not phone:
+        # Transitional: staff who haven't got a phone yet. Once they have one, login() refuses a
+        # password from them, so a hash kept here could never be used again.
+        pw_hash = _checked_hash(args.password)
+    elif args.password:
+        print("Ignored --password: staff sign in by text.")
+    try:
+        conn.execute(
+            """INSERT INTO users (username, display_name, role, label, phone, door_code, password_hash, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (username, args.name or username, args.role, args.label or "", phone, door_code, pw_hash, now_iso()))
+    except sqlite3.IntegrityError:
+        sys.exit("That phone number is already used by another person.")
     print(f"Created {args.role} '{username}'.")
 
 
 def cmd_set_password(args, conn) -> None:
     migrate(conn)
     username = args.username.strip().lower()
-    if not conn.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone():
+    row = conn.execute("SELECT role, phone FROM users WHERE username = ?", (username,)).fetchone()
+    if not row:
         sys.exit(f"No user '{username}'.")
-    pw = args.password or _ask_password()
-    if problem := password_problem(pw):
-        sys.exit(problem)
+    if row["role"] != "owner" and row["phone"]:
+        # login() never accepts a password from staff who have a phone, so setting one here would leave
+        # an unusable credential behind. Clearing the number first is the break-glass for a Twilio
+        # outage: it is a local admin command on the server, not something the API exposes.
+        sys.exit(f"'{username}' signs in with a code texted to their phone. Clear their number with "
+                 f"`set-phone --clear` first if they need a password.")
+    pw_hash = _checked_hash(args.password or _ask_password())
     with tx(conn):
-        conn.execute("UPDATE users SET password_hash = ?, active = 1 WHERE username = ?", (hash_password(pw), username))
+        conn.execute("UPDATE users SET password_hash = ?, active = 1 WHERE username = ?", (pw_hash, username))
         conn.execute("DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE username = ?)", (username,))
     print(f"Password updated for '{username}'; their other sessions were signed out.")
+
+
+def cmd_set_phone(args, conn) -> None:
+    migrate(conn)
+    username = args.username.strip().lower()
+    row = conn.execute("SELECT id, role FROM users WHERE username = ?", (username,)).fetchone()
+    if not row:
+        sys.exit(f"No user '{username}'.")
+    if args.clear:
+        # The other half of the break-glass: with no number on file, set-password works again. Any
+        # password_hash is left as it is (for staff it is already NULL).
+        with tx(conn):
+            conn.execute("UPDATE users SET phone = NULL WHERE id = ?", (row["id"],))
+            conn.execute("DELETE FROM sessions WHERE user_id = ?", (row["id"],))
+        print(f"'{username}' no longer has a phone on file; they were signed out everywhere.")
+        return
+    phone = _normalize(args.phone)
+    try:
+        with tx(conn):
+            conn.execute("UPDATE users SET phone = ? WHERE id = ?", (phone, row["id"]))
+            if row["role"] != "owner":
+                # They sign in by text from now on, so the password login() will no longer accept goes.
+                conn.execute("UPDATE users SET password_hash = NULL WHERE id = ?", (row["id"],))
+            conn.execute("DELETE FROM sessions WHERE user_id = ?", (row["id"],))
+    except sqlite3.IntegrityError:
+        sys.exit("That phone number is already used by another person.")
+    print(f"'{username}' will get sign-in codes by text; they were signed out everywhere.")
 
 
 def cmd_import_seed(args, conn) -> None:
@@ -89,21 +154,30 @@ def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(prog="python -m app.cli")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("migrate", help="create or upgrade the database")
-    cu = sub.add_parser("create-user", help="add a homeowner or housekeeper login")
+    cu = sub.add_parser("create-user", help="add an owner or staff login")
     cu.add_argument("--username", required=True)
     cu.add_argument("--name", help="display name")
     cu.add_argument("--role", choices=ROLES, required=True)
-    cu.add_argument("--password", help="omit to be prompted")
-    sp = sub.add_parser("set-password", help="reset someone's password")
+    cu.add_argument("--label", help='what they do, e.g. "Housekeeper", "Builder"')
+    cu.add_argument("--phone", help="mobile number for text-message sign-in")
+    cu.add_argument("--door-code", help="4 to 8 digits")
+    cu.add_argument("--password", help="owners, or staff with no phone; omit to be prompted (owners only)")
+    sp = sub.add_parser("set-password", help="reset a password (owners, or staff with no phone on file)")
     sp.add_argument("--username", required=True)
     sp.add_argument("--password", help="omit to be prompted")
+    ph = sub.add_parser("set-phone", help="set or clear someone's mobile number for text-message sign-in")
+    ph.add_argument("--username", required=True)
+    number = ph.add_mutually_exclusive_group(required=True)
+    number.add_argument("--phone", help="mobile number, e.g. \"(310) 555-1234\"")
+    number.add_argument("--clear", action="store_true",
+                        help="remove their number and sign them out everywhere")
     im = sub.add_parser("import-seed", help="load tasks, settings and meal plans from a folder")
     im.add_argument("path")
     args = ap.parse_args(argv)
     conn = connect()
     try:
         {"migrate": cmd_migrate, "create-user": cmd_create_user, "set-password": cmd_set_password,
-         "import-seed": cmd_import_seed}[args.cmd](args, conn)
+         "set-phone": cmd_set_phone, "import-seed": cmd_import_seed}[args.cmd](args, conn)
     finally:
         conn.close()
 

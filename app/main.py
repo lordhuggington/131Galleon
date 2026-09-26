@@ -10,14 +10,16 @@ from starlette.routing import Mount
 from starlette.staticfiles import StaticFiles
 
 from .api import routes
+from .config import get_config
 from .db import connect, migrate, now_iso
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 log = logging.getLogger("house_run_sheet")
 
 # style-src allows inline style attributes (progress bar widths etc.); scripts stay locked to 'self'.
+# img-src allows blob: so the page can preview a resized photo before it's uploaded.
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-       "font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; "
+       "font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; "
        "frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 
 
@@ -51,6 +53,7 @@ class SecurityHeaders:
 
 @contextlib.asynccontextmanager
 async def lifespan(app):
+    Path(get_config().photos_dir).mkdir(parents=True, exist_ok=True)
     conn = connect()
     try:
         version = migrate(conn)
@@ -64,6 +67,7 @@ async def lifespan(app):
 
 
 def create_app() -> Starlette:
+    STATIC_DIR.mkdir(parents=True, exist_ok=True)  # the frontend build writes here; run without it in dev
     app = Starlette(routes=[*routes, Mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")],
                     lifespan=lifespan)
     return SecurityHeaders(app)

@@ -1,0 +1,9 @@
+{
+  "name": "House Run Sheet",
+  "short_name": "Run Sheet",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FFF3E0",
+  "theme_color": "#1C7C8C",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
