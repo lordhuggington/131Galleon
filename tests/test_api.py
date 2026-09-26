@@ -818,14 +818,17 @@ class StreamParsingTest(unittest.TestCase):
     def tearDown(self):
         restore_env(self.saved_env)
 
-    def _transport(self, events, status=200):
+    def _transport(self, events, status=200, capture=None, error_body='{"error":{"type":"rate_limit_error"}}'):
         import httpx
         body = "".join(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n" for e in events)
 
         def handler(request):
             assert request.headers["x-api-key"] == "test-key"
-            assert json.loads(request.content)["stream"] is True
-            return httpx.Response(status, text=body if status == 200 else '{"error":{"type":"rate_limit_error"}}')
+            sent = json.loads(request.content)
+            assert sent["stream"] is True
+            if capture is not None:
+                capture.append(sent)
+            return httpx.Response(status, text=body if status == 200 else error_body)
         return httpx.MockTransport(handler)
 
     def test_collects_text(self):
@@ -852,3 +855,22 @@ class StreamParsingTest(unittest.TestCase):
         with self.assertRaises(GenerationError) as cm:
             call_model("hi", lambda t: True, transport=self._transport([], status=429))
         self.assertIn("rate-limiting", str(cm.exception))
+
+    def test_sends_thinking_disabled(self):
+        from app.ai import call_model
+        ev = [{"type": "message_delta", "delta": {"stop_reason": "end_turn"}}]
+        sent = []
+        call_model("hi", lambda t: True, transport=self._transport(ev, capture=sent))
+        self.assertEqual(sent[0]["thinking"], {"type": "disabled"})
+        self.assertEqual(sent[0]["max_tokens"], 16000)
+
+    def test_model_that_cannot_disable_thinking_is_explained(self):
+        from app.ai import GenerationError, call_model
+        error_body = json.dumps({"type": "error", "error": {
+            "type": "invalid_request_error",
+            "message": '"thinking.type.disabled" is not supported for this model. Thinking defaults to adaptive '
+                       'mode when not specified; use "thinking.type.enabled" with "budget_tokens" for extended thinking.'}})
+        with self.assertRaises(GenerationError) as cm:
+            call_model("hi", lambda t: True, transport=self._transport([], status=400, error_body=error_body))
+        self.assertIn("ANTHROPIC_MODEL", str(cm.exception))
+        self.assertIn("claude-sonnet-5", str(cm.exception))

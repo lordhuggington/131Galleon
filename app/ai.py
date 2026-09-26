@@ -140,7 +140,9 @@ def call_model(prompt: str, on_text: Callable[[str], bool], transport: httpx.Bas
     if not cfg.anthropic_api_key:
         raise GenerationError("Menu generation isn't set up: add ANTHROPIC_API_KEY to the server's environment.")
     headers = {"x-api-key": cfg.anthropic_api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"}
-    body = {"model": cfg.anthropic_model, "max_tokens": 16000, "stream": True,
+    # Claude 5 models default to adaptive thinking, which on this prompt spends the whole output
+    # budget thinking before any JSON is written; the menu needs those tokens for the JSON.
+    body = {"model": cfg.anthropic_model, "max_tokens": 16000, "stream": True, "thinking": {"type": "disabled"},
             "messages": [{"role": "user", "content": prompt}]}
     text, stop_reason = "", None
     timeout = httpx.Timeout(connect=15, read=180, write=30, pool=15)
@@ -179,6 +181,9 @@ def _api_error_message(status: int, body: str) -> str:
         return "Claude is busy right now. Try again in a few minutes."
     if status == 400 and "credit" in body.lower():
         return "Your Anthropic account is out of credit."
+    if status == 400 and "thinking.type.disabled" in body:
+        return ("This model can't run with thinking switched off. Set ANTHROPIC_MODEL to claude-sonnet-5 "
+                "(the default) or another model that allows it.")
     return f"The Claude API returned an error ({status or 'stream'}). Try again."
 
 
