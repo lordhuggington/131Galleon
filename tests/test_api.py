@@ -921,6 +921,26 @@ class StreamParsingTest(unittest.TestCase):
         for t in seen:
             self.assertTrue('{"a": 1}'.startswith(t), f"on_text saw non-prefix {t!r}")
 
+    def test_cancel_is_polled_during_thinking(self):
+        from app.ai import _Cancelled, call_model
+        thinking = [{"type": "content_block_start", "index": 0,
+                     "content_block": {"type": "thinking", "thinking": "", "signature": ""}},
+                    {"type": "content_block_delta", "index": 0,
+                     "delta": {"type": "thinking_delta", "thinking": "Weighing the oats."}},
+                    {"type": "content_block_stop", "index": 0}]
+        ev = thinking + [{"type": "content_block_start", "index": 1, "content_block": {"type": "text", "text": ""}},
+                         {"type": "content_block_delta", "index": 1, "delta": {"type": "text_delta", "text": "{}"}},
+                         {"type": "content_block_stop", "index": 1},
+                         {"type": "message_delta", "delta": {"stop_reason": "end_turn"}}]
+        seen = []
+        out = call_model("hi", lambda t: seen.append(t) or True, transport=self._transport(ev))
+        self.assertEqual(out, "{}")
+        self.assertEqual(seen[0], "")  # polled while thinking, before any text arrived
+        self.assertEqual(seen[-1], "{}")
+        # Stop pressed while the model is still thinking: cancelling must not wait for the first text.
+        with self.assertRaises(_Cancelled):
+            call_model("hi", lambda t: False, transport=self._transport(thinking))
+
     def test_pause_turn_continues_with_content_so_far(self):
         from app.ai import call_model
         result_block = {"type": "web_search_tool_result", "tool_use_id": "srvtoolu_1",

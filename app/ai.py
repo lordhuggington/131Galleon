@@ -170,10 +170,12 @@ def call_model(prompt: str, on_text: Callable[[str], bool], transport: httpx.Bas
                         blocks[i] = dict(ev.get("content_block") or {})
                     elif t == "content_block_delta":
                         delta = ev.get("delta") or {}
-                        if delta.get("type") == "text_delta":
+                        d = delta.get("type")
+                        if d == "text_delta":
                             text += delta.get("text", "")
-                            if not on_text(text):
-                                raise _Cancelled()
+                        # Thinking streams for minutes before any text, so poll the cancel check then too.
+                        if d in ("text_delta", "thinking_delta") and not on_text(text):
+                            raise _Cancelled()
                         if i in blocks:
                             partials[i] = _apply_delta(blocks[i], delta, partials.get(i, ""))
                     elif t == "content_block_stop" and blocks.get(i, {}).get("type") == "server_tool_use":
