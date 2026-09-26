@@ -4,6 +4,7 @@ import { Card } from "../../components/Card";
 import { Check } from "../../components/Check";
 import { Chips } from "../../components/Chips";
 import { Pill } from "../../components/Pill";
+import { rowTap } from "../../lib/rowTap";
 import { filterItems, groupByAisle, shoppingText, type ShopFilter } from "../../lib/shopping";
 import { useApp } from "../../state/AppState";
 import { useToast } from "../../state/useToast";
@@ -74,16 +75,20 @@ export function ShoppingScreen() {
     );
   }
 
-  const row = (item: { id: string; item: string; buy: string; for: "both" | "tue" | "fri" }) => (
-    <div className={got[item.id] ? "shop-item done" : "shop-item"} key={item.id}>
-      <Check checked={Boolean(got[item.id])} label={item.item} onClick={() => toggleGot(item.id, !got[item.id])} />
-      <div className="t">
-        {item.item}
-        {item.for === "both" ? null : <> <Pill>{item.for === "tue" ? "Tue" : "Fri"}</Pill></>}
+  const row = (item: { id: string; item: string; buy: string; for: "both" | "tue" | "fri" }) => {
+    // One toggle for both the check and the row tap, so the two cannot drift.
+    const toggle = () => toggleGot(item.id, !got[item.id]);
+    return (
+      <div className={got[item.id] ? "shop-item done" : "shop-item"} key={item.id} onClick={rowTap(toggle)}>
+        <Check checked={Boolean(got[item.id])} label={item.item} onClick={toggle} />
+        <div className="t">
+          {item.item}
+          {item.for === "both" ? null : <> <Pill>{item.for === "tue" ? "Tue" : "Fri"}</Pill></>}
+        </div>
+        <div className="b">{item.buy}</div>
       </div>
-      <div className="b">{item.buy}</div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div className="section">

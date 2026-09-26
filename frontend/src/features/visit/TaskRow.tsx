@@ -2,6 +2,7 @@ import type { Task } from "../../api/types";
 import { Check } from "../../components/Check";
 import { Pill } from "../../components/Pill";
 import { fmtDay } from "../../lib/dates";
+import { rowTap } from "../../lib/rowTap";
 import { DAY_LABEL, FREQ_LABEL } from "../../lib/schedule";
 import { useApp } from "../../state/AppState";
 
@@ -34,7 +35,7 @@ export function TaskRow({
   const showLast = recurring && (task.freq !== "weekly" || !pinned);
 
   return (
-    <div className={done ? "task done" : "task"}>
+    <div className={done ? "task done" : "task"} onClick={rowTap(toggle)}>
       <Check checked={done} label={task.title} onClick={toggle} />
       <div>
         <div className="t">{task.title}</div>
