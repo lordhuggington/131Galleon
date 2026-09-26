@@ -123,6 +123,8 @@ export interface ShoppingItem {
   /** Which prep day needs it. */
   for: "both" | "tue" | "fri";
   stock: boolean;
+  /** Amazon Fresh search phrase; "" on plans written before the menu asked for one. */
+  search: string;
 }
 
 export interface Plan {

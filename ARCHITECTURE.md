@@ -35,7 +35,7 @@ The first version ran as a Claude artifact: Claude's platform supplied sign-in, 
 ### Decisions worth knowing
 
 - **Starlette rather than FastAPI.** FastAPI couldn't be installed in the build environment. Starlette is what FastAPI is built on, so the handlers port across almost unchanged if you'd rather use FastAPI; you'd gain request models and OpenAPI docs.
-- **Raw SQL + numbered migrations rather than an ORM/Alembic.** Keeps the dependency count at three. Add a migration by creating `migrations/003_whatever.sql`; it's applied once on start-up.
+- **Raw SQL + numbered migrations rather than an ORM/Alembic.** Keeps the dependency count at three. Add a migration by creating `migrations/004_whatever.sql` (the next free number); it's applied once on start-up.
 - **One uvicorn worker.** SQLite handles this load easily; the login lockout and the menu job thread live in-process. Moving to several workers would mean moving the lockout into the database.
 - **Raw-body photo uploads.** `endpoint(raw_body=True)` hands the handler the request body as `bytes`, so the browser can `POST` a resized JPEG without a multipart parser — no new dependency. The server checks the `FF D8 FF` magic bytes and an 8 MB cap, and names the file from `secrets.token_hex(16)`, never from user input.
 - **Foreign keys off during migrations.** SQLite can't alter a CHECK constraint, so `002` rebuilds `users` with the DROP + RENAME procedure. `migrate()` runs every script with `PRAGMA foreign_keys = OFF` and then asserts `PRAGMA foreign_key_check` is empty, so the rebuild can't quietly cascade-delete sessions or blank out `done_by`.

@@ -36,6 +36,12 @@ export function groupByAisle(items: ShoppingItem[]): Array<[string, ShoppingItem
   return [...groups.entries()].sort((a, b) => aisleRank(a[0]) - aisleRank(b[0]));
 }
 
+/** Amazon Fresh search for one item; older plans have no phrase, so the item and quantity stand in. */
+export function freshSearchUrl(item: ShoppingItem): string {
+  const query = item.search.trim() || `${item.item} ${item.buy}`.trim();
+  return `https://www.amazon.com/s?k=${encodeURIComponent(query)}&i=amazonfresh`;
+}
+
 export function shoppingText(
   week: string,
   items: ShoppingItem[],

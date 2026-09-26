@@ -1,11 +1,12 @@
 import { useEffect, useRef } from "react";
+import type { ShoppingItem } from "../../api/types";
 import { Button } from "../../components/Button";
 import { Card } from "../../components/Card";
 import { Check } from "../../components/Check";
 import { Chips } from "../../components/Chips";
 import { Pill } from "../../components/Pill";
 import { rowTap } from "../../lib/rowTap";
-import { filterItems, groupByAisle, shoppingText, type ShopFilter } from "../../lib/shopping";
+import { filterItems, freshSearchUrl, groupByAisle, shoppingText, type ShopFilter } from "../../lib/shopping";
 import { useApp } from "../../state/AppState";
 import { useToast } from "../../state/useToast";
 import { WeekNav } from "../meals/WeekNav";
@@ -75,7 +76,7 @@ export function ShoppingScreen() {
     );
   }
 
-  const row = (item: { id: string; item: string; buy: string; for: "both" | "tue" | "fri" }) => {
+  const row = (item: ShoppingItem) => {
     // One toggle for both the check and the row tap, so the two cannot drift.
     const toggle = () => toggleGot(item.id, !got[item.id]);
     return (
@@ -85,7 +86,19 @@ export function ShoppingScreen() {
           {item.item}
           {item.for === "both" ? null : <> <Pill>{item.for === "tue" ? "Tue" : "Fri"}</Pill></>}
         </div>
-        <div className="b">{item.buy}</div>
+        <div className="b">
+          {item.buy}
+          {/* rowTap already lets taps on an <a> through, so opening the search doesn't tick the row. */}
+          <a
+            className="linkish"
+            href={freshSearchUrl(item)}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={`Search Amazon Fresh for ${item.item}`}
+          >
+            Fresh ↗
+          </a>
+        </div>
       </div>
     );
   };

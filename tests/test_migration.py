@@ -69,6 +69,23 @@ class MigrationTest(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_003_gives_older_shopping_rows_an_empty_search_phrase(self):
+        from app.db import connect, migrate
+        conn = connect(self.path)
+        try:
+            apply_001(conn)
+            conn.execute("INSERT INTO meal_plans (week, data, created_at) VALUES ('2026-09-28', '{}', 'x')")
+            conn.execute("INSERT INTO shopping_items (week, id, item, buy) VALUES ('2026-09-28', 's01', 'Oats', '1 bag')")
+
+            self.assertGreaterEqual(migrate(conn), 3)
+
+            row = conn.execute("SELECT * FROM shopping_items WHERE week = '2026-09-28' AND id = 's01'").fetchone()
+            self.assertEqual(row["item"], "Oats")
+            self.assertEqual(row["search"], "")  # rows written before the column still read cleanly
+            self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
+        finally:
+            conn.close()
+
     def test_a_failing_migration_rolls_back_and_restores_the_pragma(self):
         """A script that dies part-way leaves its BEGIN open; migrate() must not hand that back."""
         import app.db as db

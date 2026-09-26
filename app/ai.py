@@ -45,6 +45,7 @@ Breakfast is always an overnight oats variation. The main is one easy batch meal
 RULES
 - Quick and simple: each session's cooking fits in about 2.5 hours for one person with normal home kitchen equipment. Only everyday ingredients found at a normal US supermarket{store_txt}.
 - Minimise food waste: plan Tuesday and Friday together so they share perishable ingredients; size quantities to standard US pack sizes and use whole packs where you can; prefer frozen or shelf-stable forms for small amounts.
+- The shopping list is ordered on Amazon Fresh (amazon.com), so word every "item" the way Amazon Fresh sells it: brand where it matters and a real pack size, like "Fage Total 0% Greek Yogurt, 32 oz", "Amazon Grocery 93/7 Ground Beef, 1 lb" or "Just Bare Chicken Breast Tenderloins, 2 lb". "buy" is still how many of that pack to order. Write these from what you already know; do not spend searches on the shopping list.
 - Use these leftovers from last week first where sensible: {lst(leftovers)}.
 - Already in the pantry, so do not put on the shopping list: {st.get('pantry') or 'nothing specified'}.
 - Likes: {st.get('likes') or 'no preference'}. Never use: {st.get('dislikes') or 'nothing specified'}.
@@ -58,11 +59,11 @@ RULES
 
 JSON SHAPE (use exactly these keys):
 {{"sessions":{{"tue":{{"recipes":{{"breakfast":R,"main":R,"dessert":R}},"timeline":["..."]}},"fri":{{"recipes":{{"breakfast":R,"main":R,"dessert":R}},"timeline":["..."]}}}},
- "shopping":[{{"item":"Boneless skinless chicken breast","buy":"4 lb","aisle":"Meat","for":"tue","stock":false}}],
+ "shopping":[{{"item":"Just Bare Chicken Breast Tenderloins, 2 lb","buy":"2 bags","aisle":"Meat","for":"tue","stock":false,"search":"Just Bare chicken breast tenderloins 2 lb"}}],
  "leftovers":["About 150 g Greek yogurt"]}}
 where R = {{"title":"...","blurb":"one short line","portions":9,"portionNote":"9 containers: 3 a day for Wed, Thu, Fri","ingredients":[{{"item":"Chicken breast","amount":"1.8 kg (4 lb)","kcal":2160,"protein":405}}],"steps":["..."],"storage":"..."}}
 - timeline: 4 to 6 lines ordering the session's work efficiently (things that chill or bake go first).
-- shopping: everything to buy for both sessions, merged across recipes, with the exact pack size to order in "buy". "aisle" is one of {", ".join(AISLES)}. "for" is "tue", "fri" or "both" (the first session that needs it; "both" if both use it). "stock": true only for long-life items that last several weeks (oils, spices, oats, rice, protein powder, baking goods).
+- shopping: everything to buy for both sessions, merged across recipes, with the exact pack size to order in "buy". "aisle" is one of {", ".join(AISLES)}. "for" is "tue", "fri" or "both" (the first session that needs it; "both" if both use it). "stock": true only for long-life items that last several weeks (oils, spices, oats, rice, protein powder, baking goods). "search" is a short Amazon Fresh search phrase for that item — brand, product and size, with no quantity like "x2" — that lands on the right product.
 - leftovers: realistic amounts of anything left after both sessions."""
 
 
@@ -123,7 +124,7 @@ def normalize_plan(data, week: str, settings: dict) -> dict:
         shopping.append({"id": f"s{n + 1:02d}", "item": str(i.get("item", "")), "buy": str(i.get("buy", "")),
                          "aisle": i.get("aisle") if i.get("aisle") in AISLES else "Pantry",
                          "for": i.get("for") if i.get("for") in ("tue", "fri", "both") else "both",
-                         "stock": bool(i.get("stock"))})
+                         "stock": bool(i.get("stock")), "search": str(i.get("search", ""))})
     leftovers = [str(x) for x in (data.get("leftovers") or [])]
     return {"sessions": sessions, "shopping": shopping, "leftovers": leftovers}
 

@@ -330,6 +330,23 @@ class ApiTest(unittest.TestCase):
         self.assertTrue(plan["sessions"]["tue"]["recipes"]["main"]["fav"])
         self.assertEqual(self.c.get("/api/plans/2026-09-29").status_code, 400)  # not a Monday
 
+    def test_shopping_search_phrase_survives_a_round_trip(self):
+        from app import store
+        from app.db import connect, tx
+        plan = {"sessions": {}, "leftovers": [], "shopping": [
+            {"id": "s01", "item": "Fage Total 0% Greek Yogurt, 32 oz", "buy": "2", "aisle": "Dairy & eggs",
+             "for": "both", "stock": False, "search": "Fage Total 0% Greek Yogurt 32 oz"},
+            {"id": "s02", "item": "Yellow onions", "buy": "3", "aisle": "Produce", "for": "tue", "stock": False}]}
+        conn = connect()
+        try:
+            with tx(conn):
+                store.save_plan(conn, "2026-10-12", plan, source="test", note="", user_id=None)
+            saved = store.get_plan(conn, "2026-10-12", include_shopping=True)
+        finally:
+            conn.close()
+        # the second item came without a phrase, the way every imported plan does
+        self.assertEqual([i["search"] for i in saved["shopping"]], ["Fage Total 0% Greek Yogurt 32 oz", ""])
+
     def test_user_admin(self):
         me = self.login("owen")
         r = self.c.post("/api/users", json={"username": "sam", "displayName": "Sam", "role": "staff", "password": "short"}, headers=H)
@@ -802,6 +819,24 @@ class ApiTest(unittest.TestCase):
                 time.sleep(0.1)
         self.assertEqual(j["status"], "error")
         self.assertIn("incomplete", j["error"])
+
+    def test_normalize_keeps_the_amazon_fresh_search_phrase(self):
+        from app import store
+        from app.ai import normalize_plan
+        seed = json.loads((ROOT / "seed" / "plans" / "2026-09-28.json").read_text())
+        data = {"sessions": seed["sessions"], "leftovers": [], "shopping": [
+            {"item": "Fage Total 0% Greek Yogurt, 32 oz", "buy": "2", "aisle": "Dairy & eggs", "for": "both",
+             "stock": False, "search": "Fage Total 0% Greek Yogurt 32 oz"},
+            {"item": "Yellow onions", "buy": "3", "aisle": "Produce", "for": "tue", "stock": False}]}
+        plan = normalize_plan(data, "2026-10-05", store.default_settings())
+        self.assertEqual([i["search"] for i in plan["shopping"]], ["Fage Total 0% Greek Yogurt 32 oz", ""])
+
+    def test_the_prompt_asks_for_amazon_fresh_wording(self):
+        from app import store
+        from app.ai import build_prompt
+        prompt = build_prompt(store.default_settings(), "2026-10-05", [], [], [], "")
+        self.assertIn("Amazon Fresh", prompt)
+        self.assertIn('"search"', prompt)
 
 
 if __name__ == "__main__":
