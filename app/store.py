@@ -124,6 +124,35 @@ def save_plan(conn: sqlite3.Connection, week: str, plan: dict, source: str, note
         )
 
 
+def save_session(conn: sqlite3.Connection, week: str, session: str, session_data: dict, shopping: list[dict],
+                 user_id: int | None) -> None:
+    """Merge one prep session into a week. Call inside a transaction.
+
+    The week's other session, and its shopping ticks, are left exactly as they were: only this
+    session's meal_plans entry and its shopping_items rows are replaced. An existing row keeps its
+    original source, note and created_by — only data and created_at move. Rows marked for "both"
+    only exist in weeks planned before the connector; re-planning either session drops them, since
+    stale shared items on both lists is worse than the other session briefly missing them.
+    """
+    row = conn.execute("SELECT data FROM meal_plans WHERE week = ?", (week,)).fetchone()
+    if row is None:
+        data = {"sessions": {}}
+        conn.execute("INSERT INTO meal_plans (week, data, source, note, created_at, created_by) "
+                     "VALUES (?, ?, 'Claude', '', ?, ?)", (week, json.dumps(data), now_iso(), user_id))
+    else:
+        data = json.loads(row["data"])
+    data.setdefault("sessions", {})[session] = session_data
+    conn.execute("UPDATE meal_plans SET data = ?, created_at = ? WHERE week = ?",
+                 (json.dumps(data), now_iso(), week))
+    conn.execute("DELETE FROM shopping_items WHERE week = ? AND for_session IN (?, 'both')", (week, session))
+    for n, i in enumerate(shopping):
+        conn.execute(
+            """INSERT INTO shopping_items (week, id, item, buy, aisle, for_session, stock, search, got, sort_order)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)""",
+            (week, i["id"], i["item"], i["buy"], i["aisle"], session, 1 if i["stock"] else 0, i["search"], n),
+        )
+
+
 def get_plan(conn: sqlite3.Connection, week: str, include_shopping: bool) -> dict | None:
     row = conn.execute("SELECT * FROM meal_plans WHERE week = ?", (week,)).fetchone()
     if not row:
