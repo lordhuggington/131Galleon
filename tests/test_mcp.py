@@ -96,6 +96,27 @@ class McpTest(unittest.TestCase):
             headers["authorization"] = "Bearer " + use
         return self.c.post("/mcp", content=json.dumps(body), headers=headers, **kwargs)
 
+    def recipe(self, title: str, portions: int, kcal: float, protein: float) -> dict:
+        return {"title": title, "blurb": "One short line.", "portions": portions,
+                "portionNote": f"{portions} containers, one a day.",
+                "ingredients": [{"item": "Everything", "amount": "1 batch (1000 g)",
+                                 "kcal": kcal * portions, "protein": protein * portions}],
+                "steps": ["Cook it.", "Portion it out by weight."], "storage": "Fridge for 3 days."}
+
+    def payload(self, **overrides) -> dict:
+        args = {"week": "2026-10-05", "session": "tue",
+                "recipes": {"breakfast": self.recipe("Vanilla blueberry overnight oats", 3, 500, 52),
+                            "main": self.recipe("Beef burritos", 9, 500, 51),
+                            "dessert": self.recipe("Chocolate overnight oats", 3, 500, 49)},
+                "timeline": ["Start the oats.", "Brown the beef.", "Roll the burritos.", "Label everything."],
+                "shopping": [{"item": "Amazon Grocery 93/7 Ground Beef, 1 lb", "buy": "2 lb", "aisle": "Meat",
+                              "stock": False, "search": "Amazon Grocery 93/7 ground beef 1 lb"},
+                             {"item": "Mission Carb Balance Tortillas, 8 ct", "buy": "1 pack", "aisle": "Bakery",
+                              "stock": False, "search": "Mission Carb Balance flour tortillas"}],
+                "leftovers": ["About 170 g Greek yogurt"]}
+        args.update(overrides)
+        return args
+
     # ---- the 401 handshake ----
     def test_no_token_starts_the_sign_in(self):
         r = self.rpc({"jsonrpc": "2.0", "id": 1, "method": "initialize"}, token=None)
@@ -186,6 +207,106 @@ class McpTest(unittest.TestCase):
         self.assertIs(tools[1]["inputSchema"]["additionalProperties"], False)
         for tool in tools:
             self.assertNotIn("outputSchema", tool)  # deliberately none; structuredContent is still returned
+
+    # ---- tools/call ----
+    def test_get_brief_returns_text_and_structured_content(self):
+        from app import menu
+        r = self.rpc({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                      "params": {"name": "get_brief", "arguments": {"date": "2026-09-29"}}})
+        self.assertEqual(r.status_code, 200, r.text)
+        result = r.json()["result"]
+        self.assertNotIn("isError", result)
+        self.assertEqual(len(result["content"]), 1)
+        self.assertEqual(result["content"][0]["type"], "text")
+        self.assertEqual(json.loads(result["content"][0]["text"]), result["structuredContent"])
+        brief = result["structuredContent"]
+        self.assertEqual(brief["week"], "2026-09-28")
+        self.assertEqual(brief["session"], "tue")
+        self.assertEqual(brief["date"], "2026-09-29")
+        self.assertEqual(brief["portions"], {"breakfast": 3, "main": 9, "dessert": 3})
+        self.assertEqual(brief["targets"]["kcal"], 500)
+        self.assertIn("Every single portion", brief["rules"])
+        self.assertEqual(brief["existing"]["titles"]["main"], "Chipotle chicken burrito bowls")
+        self.assertEqual(brief["otherSession"]["session"], "fri")
+        # no arguments at all is legal: the brief resolves the next prep day itself
+        result = self.rpc({"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+                           "params": {"name": "get_brief"}}).json()["result"]
+        self.assertNotIn("isError", result)
+        brief = result["structuredContent"]
+        self.assertEqual(brief["date"], menu.resolve_prep_date(None))
+        self.assertEqual((brief["week"], brief["session"]), menu.week_and_session(brief["date"]))
+
+    def test_get_brief_on_a_wednesday_is_a_tool_error(self):
+        r = self.rpc({"jsonrpc": "2.0", "id": 5, "method": "tools/call",
+                      "params": {"name": "get_brief", "arguments": {"date": "2026-09-30"}}})
+        self.assertEqual(r.status_code, 200)
+        result = r.json()["result"]
+        self.assertIs(result["isError"], True)
+        self.assertEqual(result["content"][0]["text"],
+                         "2026-09-30 is a Wednesday. Prep sessions are Tuesdays and Fridays — "
+                         "pick one of those.")
+
+    def test_save_session_writes_the_plan(self):
+        r = self.rpc({"jsonrpc": "2.0", "id": 6, "method": "tools/call",
+                      "params": {"name": "save_session", "arguments": self.payload()}})
+        self.assertEqual(r.status_code, 200, r.text)
+        result = r.json()["result"]
+        self.assertNotIn("isError", result)
+        self.assertIn("Saved Tuesday 6 Oct (week of 5 Oct)", result["content"][0]["text"])
+        self.assertIn("Open http://testserver/#meals", result["content"][0]["text"])
+        structured = result["structuredContent"]
+        self.assertEqual(structured["week"], "2026-10-05")
+        self.assertEqual(structured["session"], "tue")
+        self.assertEqual(structured["date"], "2026-10-06")
+        self.assertEqual(structured["shoppingCount"], 2)
+        self.assertEqual(structured["url"], "http://testserver/#meals")
+        self.assertEqual(structured["recipes"]["main"], {"title": "Beef burritos", "portions": 9,
+                                                        "kcalPerPortion": 500, "proteinPerPortion": 51})
+        # …and the app reads it straight back
+        plan = self.c.get("/api/plans/2026-10-05").json()["plan"]
+        self.assertEqual(plan["sessions"]["tue"]["recipes"]["breakfast"]["title"],
+                         "Vanilla blueberry overnight oats")
+        self.assertEqual(plan["sessions"]["tue"]["covers"], "Wed, Thu, Fri")
+        self.assertEqual(plan["sessions"]["tue"]["leftovers"], ["About 170 g Greek yogurt"])
+        self.assertEqual([i["id"] for i in plan["shopping"]], ["t01", "t02"])
+        self.assertEqual(plan["source"], "Claude")
+
+    def test_an_off_target_session_saves_nothing(self):
+        self.rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                  "params": {"name": "save_session", "arguments": self.payload()}})
+        bad = self.payload(recipes={"breakfast": self.recipe("Oats", 3, 500, 52),
+                                    "main": self.recipe("Burritos", 9, 612, 51),
+                                    "dessert": self.recipe("Pots", 3, 500, 44)})
+        r = self.rpc({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                      "params": {"name": "save_session", "arguments": bad}})
+        self.assertEqual(r.status_code, 200, r.text)
+        result = r.json()["result"]
+        self.assertIs(result["isError"], True)
+        self.assertNotIn("structuredContent", result)
+        self.assertEqual(result["content"][0]["text"],
+                         "Nothing was saved. Fix these and call save_session again:\n"
+                         "main: 612 kcal per portion, target 500 ±35.\n"
+                         "dessert: 44 g protein per portion, need at least 47.")
+        # the session that was already there is untouched
+        plan = self.c.get("/api/plans/2026-10-05").json()["plan"]
+        self.assertEqual(plan["sessions"]["tue"]["recipes"]["main"]["title"], "Beef burritos")
+
+    def test_a_wrong_argument_shape_is_a_tool_error(self):
+        r = self.rpc({"jsonrpc": "2.0", "id": 8, "method": "tools/call",
+                      "params": {"name": "save_session", "arguments": {"week": "2026-10-05"}}})
+        result = r.json()["result"]
+        self.assertIs(result["isError"], True)
+        self.assertEqual(result["content"][0]["text"],
+                         "save_session needs an object with week, session, recipes, timeline, "
+                         "shopping and leftovers.")
+
+    def test_unknown_tool_and_bad_arguments(self):
+        r = self.rpc({"jsonrpc": "2.0", "id": 9, "method": "tools/call",
+                      "params": {"name": "delete_everything", "arguments": {}}})
+        self.assertEqual(r.json()["error"], {"code": -32602, "message": "Unknown tool: delete_everything."})
+        r = self.rpc({"jsonrpc": "2.0", "id": 10, "method": "tools/call",
+                      "params": {"name": "get_brief", "arguments": "2026-09-29"}})
+        self.assertEqual(r.json()["error"], {"code": -32602, "message": "arguments must be an object."})
 
     # ---- the envelope ----
     def test_a_malformed_envelope_is_a_json_rpc_error(self):

@@ -8,11 +8,13 @@ from __future__ import annotations
 import json
 import logging
 
+from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from . import menu, oauth
+from . import menu, oauth, store
+from .db import connect, tx
 
 log = logging.getLogger("house_run_sheet")
 
@@ -64,6 +66,58 @@ def jsonrpc_error(rid, code: int, message: str, status: int = 200) -> JSONRespon
                         status_code=status)
 
 
+# ---------- the two tools ----------
+def tool_error(text: str) -> dict:
+    """A tool failure: HTTP 200, a JSON-RPC result, isError true. Claude reads the text and retries."""
+    return {"content": [{"type": "text", "text": text}], "isError": True}
+
+
+def tool_ok(text: str, structured: dict) -> dict:
+    return {"content": [{"type": "text", "text": text}], "structuredContent": structured}
+
+
+def _get_brief(conn, args: dict, user) -> dict:
+    given = args.get("date")
+    if given is not None and not isinstance(given, str):
+        raise menu.MenuError('date must be a string like "2026-09-29".')
+    data = menu.brief(conn, given)
+    # One text block holding the JSON, plus the same object as structuredContent: clients that
+    # ignore structuredContent read the text.
+    return tool_ok(json.dumps(data, indent=2), data)
+
+
+def _save_session(conn, args: dict, user) -> dict:
+    normalized, shopping = menu.normalize_session(args)
+    settings = store.get_settings(conn)
+    problems = menu.validate_session(normalized, settings)
+    if problems:
+        return tool_error(menu.problem_report(problems))  # nothing is written when anything is wrong
+    week, session = normalized["week"], normalized["session"]
+    data = menu.session_data(normalized, settings)
+    with tx(conn):
+        store.save_session(conn, week, session, data, shopping, user["id"])
+    log.info("saved the %s session of week %s from the Claude connector", session, week)
+    text, structured = menu.save_result(week, session, data, shopping)
+    return tool_ok(text, structured)
+
+
+HANDLERS = {"get_brief": _get_brief, "save_session": _save_session}
+
+
+def call_tool(name: str, args: dict, user) -> dict:
+    """Run one tool on its own connection, in a worker thread, exactly like api.endpoint. Never raises."""
+    conn = connect()
+    try:
+        return HANDLERS[name](conn, args, user)
+    except menu.MenuError as e:
+        return tool_error(str(e))
+    except Exception:  # noqa: BLE001 - a stack trace must never reach the chat
+        log.exception("MCP tool %s failed", name)
+        return tool_error("Something went wrong saving that session. Try again.")
+    finally:
+        conn.close()
+
+
 async def _read_body(request: Request) -> bytes | None:
     """The request body, or None when it is over the cap — declared or measured while streaming."""
     try:
@@ -113,6 +167,14 @@ async def mcp_post(request: Request) -> Response:
         return jsonrpc_result(rid, {})
     if method == "tools/list":
         return jsonrpc_result(rid, {"tools": TOOLS})  # two tools, no pagination, no nextCursor
+    if method == "tools/call":
+        name = params.get("name")
+        if name not in TOOL_NAMES:
+            return jsonrpc_error(rid, -32602, f"Unknown tool: {name}.")
+        args = params.get("arguments", {})
+        if not isinstance(args, dict):
+            return jsonrpc_error(rid, -32602, "arguments must be an object.")
+        return jsonrpc_result(rid, await run_in_threadpool(call_tool, name, args, user))
     return jsonrpc_error(rid, -32601, f"Method not found: {method}.")
 
 
