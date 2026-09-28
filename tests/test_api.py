@@ -3,10 +3,9 @@ from __future__ import annotations
 
 import contextlib
 import io
-import json
+import logging
 import os
 import tempfile
-import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -17,7 +16,7 @@ JPEG = b"\xff\xd8\xff" + b"\x00" * 200  # only the magic bytes are checked serve
 PHOTO_HEADERS = {**H, "content-type": "image/jpeg"}
 # Every variable these tests set. Saved in setUp and restored in tearDown so the suite doesn't depend
 # on module order — the way tests/test_sms.py already does it.
-ENV_KEYS = ("HRS_DB_PATH", "HRS_PHOTOS_DIR", "HRS_COOKIE_SECURE", "ANTHROPIC_API_KEY",
+ENV_KEYS = ("HRS_DB_PATH", "HRS_PHOTOS_DIR", "HRS_COOKIE_SECURE", "HRS_PUBLIC_URL",
             "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_VERIFY_SERVICE_SID")
 
 
@@ -49,7 +48,7 @@ class ApiTest(unittest.TestCase):
         os.environ["HRS_DB_PATH"] = str(Path(self.tmp.name) / "test.db")
         os.environ["HRS_PHOTOS_DIR"] = str(Path(self.tmp.name) / "photos")
         os.environ["HRS_COOKIE_SECURE"] = "0"
-        os.environ["ANTHROPIC_API_KEY"] = "test-key"
+        os.environ["HRS_PUBLIC_URL"] = "http://testserver"  # the host starlette.testclient uses
         os.environ["TWILIO_ACCOUNT_SID"] = "AC123"
         os.environ["TWILIO_AUTH_TOKEN"] = "tok"
         os.environ["TWILIO_VERIFY_SERVICE_SID"] = "VA123"
@@ -271,11 +270,17 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(len(state["tasks"]), 41)
         self.assertEqual(self.c.post("/api/tasks", json={"title": "x"}, headers=H).status_code, 403)
         self.assertEqual(self.c.get("/api/users").status_code, 403)
+        self.assertEqual(self.c.get("/api/oauth/connections").status_code, 403)
         self.assertEqual(self.c.post("/api/visits/2026-09-29/extras", json={"title": "x"}, headers=H).status_code, 403)
-        self.assertEqual(self.c.post("/api/plans/2026-09-28/generate", json={}, headers=H).status_code, 403)
         plan = self.c.get("/api/plans/2026-09-28").json()["plan"]
         self.assertIn("sessions", plan)
         self.assertNotIn("shopping", plan)  # shopping list is owner-only
+
+    def test_menu_generation_is_gone(self):
+        """No route left, so the static mount at '/' answers: 405 for a POST it won't serve, 404 for the GET."""
+        self.login("owen")
+        self.assertEqual(self.c.post("/api/plans/2026-09-28/generate", json={}, headers=H).status_code, 405)
+        self.assertEqual(self.c.get("/api/jobs/1").status_code, 404)
 
     def test_staff_ticks_and_notes(self):
         self.login("maria")
@@ -329,6 +334,13 @@ class ApiTest(unittest.TestCase):
         self.assertTrue(plan["got"]["s01"])
         self.assertTrue(plan["sessions"]["tue"]["recipes"]["main"]["fav"])
         self.assertEqual(self.c.get("/api/plans/2026-09-29").status_code, 400)  # not a Monday
+
+    def test_the_seed_puts_its_leftovers_on_the_friday_session(self):
+        self.login("owen")
+        plan = self.c.get("/api/plans/2026-09-28").json()["plan"]
+        self.assertNotIn("leftovers", plan)  # never at the top of a plan any more
+        self.assertEqual(plan["sessions"]["tue"]["leftovers"], [])
+        self.assertIn("About 170 g Greek yogurt", plan["sessions"]["fri"]["leftovers"])
 
     def test_shopping_search_phrase_survives_a_round_trip(self):
         from app import store
@@ -723,6 +735,39 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(r.status_code, 413)
         self.assertEqual(r.json()["error"], "That photo is too large.")
 
+    def test_a_non_ascii_content_length_is_not_a_500(self):
+        """"²".isdigit() is True but int("²") raises, so the pre-check needs isascii() too.
+
+        The header is sent at ASGI level, not through the test client: httpx re-encodes a latin-1 header
+        value as UTF-8, which arrives as "Â²" and is not a digit at all.
+        """
+        import asyncio
+        import json
+
+        from starlette.requests import Request
+        from app import api
+        route = next(r for r in api.routes
+                     if r.path == "/api/visits/{date}/photos" and "POST" in r.methods)
+
+        async def receive():
+            return {"type": "http.request", "body": JPEG, "more_body": False}
+
+        def post(declared: bytes):
+            scope = {"type": "http", "http_version": "1.1", "method": "POST", "scheme": "http",
+                     "path": "/api/visits/2026-09-29/photos", "root_path": "", "query_string": b"kind=done",
+                     "headers": [(b"host", b"testserver"), (b"x-hrs", b"1"),
+                                 (b"content-type", b"image/jpeg"), (b"content-length", declared)],
+                     "server": ("testserver", 80), "client": ("testclient", 50000),
+                     "path_params": {"date": "2026-09-29"}}
+            return asyncio.run(route.endpoint(Request(scope, receive)))
+
+        r = post(b"\xb2")  # "²": past the size gate without raising, then refused for having no session
+        self.assertEqual(r.status_code, 401)
+        self.assertEqual(json.loads(r.body), {"error": "Please sign in."})
+        r = post(b"99999999")  # an honest, ASCII, oversized length is still refused unread
+        self.assertEqual(r.status_code, 413)
+        self.assertEqual(json.loads(r.body), {"error": "That photo is too large."})
+
     def test_photos_require_a_session(self):
         self.assertEqual(self.c.get("/photos/" + "a" * 32 + ".jpg").status_code, 401)
         r = self.c.post("/api/visits/2026-09-29/photos?kind=done", content=JPEG, headers=PHOTO_HEADERS)
@@ -782,242 +827,31 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(self.c.delete(f"/api/visits/2026-09-29/photos/{mine['id']}", headers=H).status_code, 404)
         self.assertEqual(self.c.get("/api/state").json()["visits"].get("2026-09-29", {}).get("photos", []), [])
 
-    # ---- AI generation (Claude API mocked) ----
-    def test_generate_menu(self):
-        self.login("owen")
-        seed = json.loads((ROOT / "seed" / "plans" / "2026-09-28.json").read_text())
-        reply = json.dumps({"sessions": seed["sessions"], "shopping": seed["shopping"], "leftovers": seed["leftovers"]})
+    # ---- startup ----
 
-        def fake_call(prompt, on_text):
-            assert "Do not repeat these recent recipes" in prompt
-            on_text(reply[:100])
-            return "```json\n" + reply + "\n```"
+    def test_startup_logs_the_schema_version_through_uvicorns_handler(self):
+        """uvicorn hands "house_run_sheet" no handler, so lifespan has to borrow one or every info line is lost."""
+        from starlette.testclient import TestClient
+        from app.main import create_app
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        uvicorn_log = logging.getLogger("uvicorn")  # where uvicorn hangs its stderr handler
+        app_log = logging.getLogger("house_run_sheet")
+        kept_handlers, kept_level = app_log.handlers[:], app_log.level
+        uvicorn_log.addHandler(handler)
+        try:
+            with TestClient(create_app()):
+                pass
+        finally:
+            uvicorn_log.removeHandler(handler)
+            app_log.handlers[:] = kept_handlers  # a leaked handler would print over the whole suite
+            app_log.level = kept_level
+        self.assertIn("database ready at schema version 4", stream.getvalue())
 
-        with mock.patch("app.ai.call_model", side_effect=fake_call):
-            r = self.c.post("/api/plans/2026-10-05/generate", json={"note": "Asian flavours"}, headers=H)
-            self.assertEqual(r.status_code, 200, r.text)
-            job = r.json()["jobId"]
-            for _ in range(50):
-                j = self.c.get(f"/api/jobs/{job}").json()
-                if j["status"] != "running":
-                    break
-                time.sleep(0.1)
-        self.assertEqual(j["status"], "done", j)
-        plan = self.c.get("/api/plans/2026-10-05").json()["plan"]
-        self.assertEqual(plan["sessions"]["tue"]["date"], "2026-10-06")
-        self.assertEqual(plan["note"], "Asian flavours")
-        self.assertGreater(len(plan["shopping"]), 10)
-
-    def test_generate_bad_reply(self):
-        self.login("owen")
-        with mock.patch("app.ai.call_model", return_value="Sorry, no JSON here"):
-            job = self.c.post("/api/plans/2026-10-05/generate", json={}, headers=H).json()["jobId"]
-            for _ in range(50):
-                j = self.c.get(f"/api/jobs/{job}").json()
-                if j["status"] != "running":
-                    break
-                time.sleep(0.1)
-        self.assertEqual(j["status"], "error")
-        self.assertIn("incomplete", j["error"])
-
-    def test_normalize_keeps_the_amazon_fresh_search_phrase(self):
-        from app import store
-        from app.ai import normalize_plan
-        seed = json.loads((ROOT / "seed" / "plans" / "2026-09-28.json").read_text())
-        data = {"sessions": seed["sessions"], "leftovers": [], "shopping": [
-            {"item": "Fage Total 0% Greek Yogurt, 32 oz", "buy": "2", "aisle": "Dairy & eggs", "for": "both",
-             "stock": False, "search": "Fage Total 0% Greek Yogurt 32 oz"},
-            {"item": "Yellow onions", "buy": "3", "aisle": "Produce", "for": "tue", "stock": False}]}
-        plan = normalize_plan(data, "2026-10-05", store.default_settings())
-        self.assertEqual([i["search"] for i in plan["shopping"]], ["Fage Total 0% Greek Yogurt 32 oz", ""])
-
-    def test_the_prompt_asks_for_amazon_fresh_wording(self):
-        from app import store
-        from app.ai import build_prompt
-        prompt = build_prompt(store.default_settings(), "2026-10-05", [], [], [], "")
-        self.assertIn("Amazon Fresh", prompt)
-        self.assertIn('"search"', prompt)
+    def test_nothing_is_borrowed_when_uvicorn_has_configured_no_logging(self):
+        """setUp already started the app under the test client; the suite has to stay as quiet as it was."""
+        self.assertEqual(logging.getLogger("house_run_sheet").handlers, [])
 
 
 if __name__ == "__main__":
     unittest.main()
-
-
-class StreamParsingTest(unittest.TestCase):
-    """call_model against a fake Claude API that streams server-sent events."""
-
-    def setUp(self):
-        self.saved_env = save_env()
-        os.environ["ANTHROPIC_API_KEY"] = "test-key"
-
-    def tearDown(self):
-        restore_env(self.saved_env)
-
-    def _sse(self, events):
-        return "".join(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n" for e in events)
-
-    def _transport(self, events, status=200, capture=None, error_body='{"error":{"type":"rate_limit_error"}}'):
-        import httpx
-        body = self._sse(events)
-
-        def handler(request):
-            assert request.headers["x-api-key"] == "test-key"
-            sent = json.loads(request.content)
-            assert sent["stream"] is True
-            if capture is not None:
-                capture.append(sent)
-            return httpx.Response(status, text=body if status == 200 else error_body)
-        return httpx.MockTransport(handler)
-
-    def _turns_transport(self, turns, capture):
-        """Answer each successive request with the next stream in `turns`; the last one repeats."""
-        import httpx
-
-        def handler(request):
-            capture.append(json.loads(request.content))
-            return httpx.Response(200, text=self._sse(turns[min(len(capture) - 1, len(turns) - 1)]))
-        return httpx.MockTransport(handler)
-
-    def test_collects_text(self):
-        from app.ai import call_model
-        ev = [{"type": "message_start"},
-              {"type": "content_block_delta", "delta": {"type": "text_delta", "text": '{"a":'}},
-              {"type": "content_block_delta", "delta": {"type": "text_delta", "text": " 1}"}},
-              {"type": "message_delta", "delta": {"stop_reason": "end_turn"}},
-              {"type": "message_stop"}]
-        seen = []
-        out = call_model("hi", lambda t: seen.append(t) or True, transport=self._transport(ev))
-        self.assertEqual(out, '{"a": 1}')
-        self.assertEqual(seen[-1], '{"a": 1}')
-
-    def test_truncated_reply_is_an_error(self):
-        from app.ai import GenerationError, call_model
-        ev = [{"type": "content_block_delta", "delta": {"type": "text_delta", "text": "{"}},
-              {"type": "message_delta", "delta": {"stop_reason": "max_tokens"}}]
-        with self.assertRaises(GenerationError):
-            call_model("hi", lambda t: True, transport=self._transport(ev))
-
-    def test_rate_limit_message(self):
-        from app.ai import GenerationError, call_model
-        with self.assertRaises(GenerationError) as cm:
-            call_model("hi", lambda t: True, transport=self._transport([], status=429))
-        self.assertIn("rate-limiting", str(cm.exception))
-
-    def test_sends_adaptive_thinking_and_web_search(self):
-        from app.ai import call_model
-        ev = [{"type": "message_delta", "delta": {"stop_reason": "end_turn"}}]
-        sent = []
-        call_model("hi", lambda t: True, transport=self._transport(ev, capture=sent))
-        self.assertEqual(sent[0]["thinking"], {"type": "adaptive"})
-        self.assertEqual(sent[0]["max_tokens"], 64000)
-        self.assertEqual(sent[0]["tools"], [{"type": "web_search_20260209", "name": "web_search", "max_uses": 8}])
-        self.assertEqual(sent[0]["messages"], [{"role": "user", "content": "hi"}])
-
-    def test_model_without_adaptive_thinking_is_explained(self):
-        from app.ai import GenerationError, call_model
-        error_body = json.dumps({"type": "error", "error": {
-            "type": "invalid_request_error",
-            "message": '"thinking.type.adaptive" is not supported for this model. '
-                       'Use "thinking.type.enabled" with "budget_tokens".'}})
-        with self.assertRaises(GenerationError) as cm:
-            call_model("hi", lambda t: True, transport=self._transport([], status=400, error_body=error_body))
-        self.assertIn("ANTHROPIC_MODEL", str(cm.exception))
-        self.assertIn("claude-opus-5-5", str(cm.exception))
-
-    def test_ignores_thinking_and_search_blocks(self):
-        from app.ai import call_model
-        ev = [{"type": "message_start"},
-              {"type": "content_block_start", "index": 0,
-               "content_block": {"type": "thinking", "thinking": "", "signature": ""}},
-              {"type": "content_block_delta", "index": 0,
-               "delta": {"type": "thinking_delta", "thinking": "Check the oats label first."}},
-              {"type": "content_block_delta", "index": 0, "delta": {"type": "signature_delta", "signature": "sig-1"}},
-              {"type": "content_block_stop", "index": 0},
-              {"type": "content_block_start", "index": 1,
-               "content_block": {"type": "server_tool_use", "id": "srvtoolu_1", "name": "web_search", "input": {}}},
-              {"type": "content_block_delta", "index": 1,
-               "delta": {"type": "input_json_delta", "partial_json": '{"query":'}},
-              {"type": "content_block_delta", "index": 1,
-               "delta": {"type": "input_json_delta", "partial_json": '"oats nutrition"}'}},
-              {"type": "content_block_stop", "index": 1},
-              {"type": "content_block_start", "index": 2, "content_block": {
-                  "type": "web_search_tool_result", "tool_use_id": "srvtoolu_1",
-                  "content": [{"type": "web_search_result", "title": "Oats", "url": "https://example.com/oats"}]}},
-              {"type": "content_block_stop", "index": 2},
-              {"type": "content_block_start", "index": 3, "content_block": {"type": "text", "text": ""}},
-              {"type": "content_block_delta", "index": 3, "delta": {"type": "text_delta", "text": '{"a":'}},
-              {"type": "content_block_delta", "index": 3, "delta": {"type": "text_delta", "text": " 1}"}},
-              {"type": "content_block_stop", "index": 3},
-              {"type": "message_delta", "delta": {"stop_reason": "end_turn"}},
-              {"type": "message_stop"}]
-        seen = []
-        out = call_model("hi", lambda t: seen.append(t) or True, transport=self._transport(ev))
-        self.assertEqual(out, '{"a": 1}')
-        for t in seen:
-            self.assertTrue('{"a": 1}'.startswith(t), f"on_text saw non-prefix {t!r}")
-
-    def test_cancel_is_polled_during_thinking(self):
-        from app.ai import _Cancelled, call_model
-        thinking = [{"type": "content_block_start", "index": 0,
-                     "content_block": {"type": "thinking", "thinking": "", "signature": ""}},
-                    {"type": "content_block_delta", "index": 0,
-                     "delta": {"type": "thinking_delta", "thinking": "Weighing the oats."}},
-                    {"type": "content_block_stop", "index": 0}]
-        ev = thinking + [{"type": "content_block_start", "index": 1, "content_block": {"type": "text", "text": ""}},
-                         {"type": "content_block_delta", "index": 1, "delta": {"type": "text_delta", "text": "{}"}},
-                         {"type": "content_block_stop", "index": 1},
-                         {"type": "message_delta", "delta": {"stop_reason": "end_turn"}}]
-        seen = []
-        out = call_model("hi", lambda t: seen.append(t) or True, transport=self._transport(ev))
-        self.assertEqual(out, "{}")
-        self.assertEqual(seen[0], "")  # polled while thinking, before any text arrived
-        self.assertEqual(seen[-1], "{}")
-        # Stop pressed while the model is still thinking: cancelling must not wait for the first text.
-        with self.assertRaises(_Cancelled):
-            call_model("hi", lambda t: False, transport=self._transport(thinking))
-
-    def test_pause_turn_continues_with_content_so_far(self):
-        from app.ai import call_model
-        result_block = {"type": "web_search_tool_result", "tool_use_id": "srvtoolu_1",
-                        "content": [{"type": "web_search_result", "title": "Oats", "url": "https://example.com/oats"}]}
-        paused = [{"type": "content_block_start", "index": 0,
-                   "content_block": {"type": "server_tool_use", "id": "srvtoolu_1", "name": "web_search", "input": {}}},
-                  {"type": "content_block_delta", "index": 0,
-                   "delta": {"type": "input_json_delta", "partial_json": '{"query":'}},
-                  {"type": "content_block_delta", "index": 0,
-                   "delta": {"type": "input_json_delta", "partial_json": '"oats nutrition"}'}},
-                  {"type": "content_block_stop", "index": 0},
-                  {"type": "content_block_start", "index": 1, "content_block": result_block},
-                  {"type": "content_block_stop", "index": 1},
-                  {"type": "content_block_start", "index": 2, "content_block": {"type": "text", "text": ""}},
-                  {"type": "content_block_delta", "index": 2,
-                   "delta": {"type": "text_delta", "text": "Checking labels. "}},
-                  {"type": "content_block_stop", "index": 2},
-                  {"type": "message_delta", "delta": {"stop_reason": "pause_turn"}}]
-        finished = [{"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
-                    {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": '{"a": 1}'}},
-                    {"type": "content_block_stop", "index": 0},
-                    {"type": "message_delta", "delta": {"stop_reason": "end_turn"}}]
-        sent = []
-        out = call_model("hi", lambda t: True, transport=self._turns_transport([paused, finished], sent))
-        self.assertEqual(out, 'Checking labels. {"a": 1}')
-        self.assertEqual(len(sent), 2)
-        self.assertEqual(len(sent[1]["messages"]), 2)
-        self.assertEqual(sent[1]["messages"][1]["role"], "assistant")
-        self.assertEqual(sent[1]["messages"][1]["content"], [
-            {"type": "server_tool_use", "id": "srvtoolu_1", "name": "web_search",
-             "input": {"query": "oats nutrition"}},
-            result_block,
-            {"type": "text", "text": "Checking labels. "}])
-
-    def test_too_many_pause_turns_is_an_error(self):
-        from app.ai import GenerationError, call_model
-        paused = [{"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
-                  {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Searching. "}},
-                  {"type": "content_block_stop", "index": 0},
-                  {"type": "message_delta", "delta": {"stop_reason": "pause_turn"}}]
-        sent = []
-        with self.assertRaises(GenerationError) as cm:
-            call_model("hi", lambda t: True, transport=self._turns_transport([paused], sent))
-        self.assertIn("paused", str(cm.exception))
-        self.assertEqual(len(sent), 4)

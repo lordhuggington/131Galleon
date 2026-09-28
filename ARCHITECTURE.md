@@ -17,7 +17,8 @@ The first version ran as a Claude artifact: Claude's platform supplied sign-in, 
 | Data | Firestore-style JSON documents | SQLite tables (see below), WAL mode, foreign keys on |
 | Live updates | Push subscriptions | Page polls `/api/state` every 20 s while visible, and after every change |
 | Front end | One artifact page rendered by Claude | React 19 + TypeScript built with Vite from `frontend/` into `static/`; one `AppState` context (reducer + React 19 hooks), optimistic ticks, 20 s polling, screens kept alive with `<Activity>` |
-| AI menus | In-browser `sample()` on the viewer's Claude plan | Server calls the Claude Messages API with your `ANTHROPIC_API_KEY` (billed to your Anthropic account per menu). Runs as a background job; the page polls `/api/jobs/{id}` and can cancel |
+| AI menus | In-browser `sample()` on the viewer's Claude plan | The Claude app talks to the server as an MCP connector over OAuth; the app validates the macros and stores the session. No API key, no per-menu cost. |
+| Machine access | n/a | The app is its own OAuth 2.1 authorization server: Dynamic Client Registration, PKCE `S256`, one-hour access tokens and 30-day refresh tokens that rotate on every use with reuse detection. `POST /mcp` accepts a bearer token only for an active **owner** |
 | Hosting | claude.ai | One Docker container + a volume; Cloudflare Tunnel or a reverse proxy for HTTPS |
 | Backups | Platform | `deploy/backup.sh` (SQLite online backup → gzip, plus an rsync of the photos directory; optional off-site copy to a Hetzner Storage Box) |
 
@@ -29,23 +30,25 @@ The first version ran as a Claude artifact: Claude's platform supplied sign-in, 
 - `tasks`: recurring jobs (`freq` visit/weekly/fortnightly/monthly, `day` any/tue/fri). Deleting sets `active = 0` so history still makes sense.
 - `visits`: the note for a visit date. `task_completions` (date, task, who, when) and `visit_extras` (one-off jobs) hang off the date. "Due" logic for weekly/monthly tasks is computed from completion history, the same way as before.
 - `settings`: meal targets and preferences as one JSON value.
-- `meal_plans`: one row per week (keyed by Monday); recipes are stored as JSON. `shopping_items` is a real table so ticking items off is a single-row update.
-- `ai_jobs`: menu generation status and progress.
+- `meal_plans`: one row per week (keyed by Monday); recipes are stored as JSON, one object per prep session, and each session carries its own `leftovers` list. `shopping_items` is a real table so ticking items off is a single-row update.
+- `oauth_clients`, `oauth_codes`, `oauth_tokens`: the Claude connector's registered clients, its 10-minute authorization codes, and hashed access and refresh tokens grouped by `family` (one grant chain per connection).
 
 ### Decisions worth knowing
 
 - **Starlette rather than FastAPI.** FastAPI couldn't be installed in the build environment. Starlette is what FastAPI is built on, so the handlers port across almost unchanged if you'd rather use FastAPI; you'd gain request models and OpenAPI docs.
-- **Raw SQL + numbered migrations rather than an ORM/Alembic.** Keeps the dependency count at three. Add a migration by creating `migrations/004_whatever.sql` (the next free number); it's applied once on start-up.
-- **One uvicorn worker.** SQLite handles this load easily; the login lockout and the menu job thread live in-process. Moving to several workers would mean moving the lockout into the database.
+- **Raw SQL + numbered migrations rather than an ORM/Alembic.** Keeps the dependency count at three. Add a migration by creating `migrations/005_whatever.sql` (the next free number); it's applied once on start-up.
+- **One uvicorn worker.** SQLite handles this load easily and the login lockout lives in-process. Moving to several workers would mean moving the lockout into the database.
 - **Raw-body photo uploads.** `endpoint(raw_body=True)` hands the handler the request body as `bytes`, so the browser can `POST` a resized JPEG without a multipart parser — no new dependency. The server checks the `FF D8 FF` magic bytes and an 8 MB cap, and names the file from `secrets.token_hex(16)`, never from user input.
 - **Foreign keys off during migrations.** SQLite can't alter a CHECK constraint, so `002` rebuilds `users` with the DROP + RENAME procedure. `migrate()` runs every script with `PRAGMA foreign_keys = OFF` and then asserts `PRAGMA foreign_key_check` is empty, so the rebuild can't quietly cascade-delete sessions or blank out `done_by`.
 - **Twilio Verify rather than hand-rolled OTP.** Twilio stores and expires the code, rate-limits per number and handles delivery; the app keeps no code and no SMS state of its own.
 - **React + TypeScript + Vite on the front end, with a multi-stage Docker build.** `frontend/` is the source; `npm run build` emits `static/` (gitignored) and the image's first stage does that with `npm ci`. Dev deps are kept to TypeScript, Vite, `@vitejs/plugin-react` and Vitest — no UI kit, no state library and no router: `location.hash` plus one context/reducer is enough for five screens. Vitest covers the pure logic (dates, due-task rules, macros, shopping text, phone formatting); screens are checked by TypeScript, the build and a manual smoke pass.
 - **No inline scripts, ever.** The CSP is `script-src 'self'`, so the build must emit only external module scripts — the plan greps the built `index.html` to prove it. React escapes text by default and `dangerouslySetInnerHTML` is banned, which replaces v1's hand-rolled `esc()`.
+- **Hand-rolled OAuth + MCP rather than the SDK.** The `mcp` SDK would have been a fourth dependency and still would not have supplied login, a consent page or token issuance, which is most of the work. `app/oauth.py` and `app/mcp.py` are plain Starlette routes, and the transport is Streamable HTTP in its stateless JSON form: one JSON-RPC request in, one JSON response out, no SSE and no session ids.
+- **Claude does the arithmetic, the app verifies.** A product catalogue and portion solver in the app was considered and put off. Instead `save_session` re-adds Claude's per-ingredient kcal and protein, divides by the portions and refuses the whole session — saving nothing — if any recipe misses the household targets, using exactly the rule `frontend/src/lib/macros.ts: macroStatus` draws the pills with, so the error text and the Meals tab can never disagree.
 
 ## Before going live
 
-1. Set `ANTHROPIC_API_KEY`, the three `TWILIO_*` values for text-message sign-in, and keep `HRS_COOKIE_SECURE=true`.
+1. Set `HRS_PUBLIC_URL` to the public address with no trailing slash, the three `TWILIO_*` values for text-message sign-in, and keep `HRS_COOKIE_SECURE=true`.
 2. Serve only over HTTPS (Cloudflare Tunnel does this for you).
 3. Create each person their own login with a phone number, so they sign in by text; owners should also change their temporary password under **Account**.
 4. Put `deploy/backup.sh` in cron and test one restore.

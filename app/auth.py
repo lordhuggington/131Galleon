@@ -68,7 +68,8 @@ def normalize_phone(raw: str) -> str:
     raise ApiError(400, "Enter a mobile number like (310) 555-1234.")
 
 
-def _token_hash(token: str) -> str:
+def token_hash(token: str) -> str:
+    """SHA-256 hex. Session cookies, OAuth codes and OAuth tokens are only ever stored hashed."""
     return hashlib.sha256(token.encode()).hexdigest()
 
 
@@ -78,7 +79,7 @@ def create_session(conn: sqlite3.Connection, user_id: int) -> tuple[str, int]:
     expires = datetime.now(timezone.utc) + timedelta(days=days)
     conn.execute(
         "INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
-        (_token_hash(token), user_id, now_iso(), expires.strftime("%Y-%m-%dT%H:%M:%S.%fZ")),
+        (token_hash(token), user_id, now_iso(), expires.strftime("%Y-%m-%dT%H:%M:%S.%fZ")),
     )
     # Housekeeping: drop expired sessions.
     conn.execute("DELETE FROM sessions WHERE expires_at < ?", (now_iso(),))
@@ -93,18 +94,18 @@ def user_for_token(conn: sqlite3.Connection, token: str | None) -> sqlite3.Row |
            FROM sessions s
            JOIN users u ON u.id = s.user_id
            WHERE s.token_hash = ? AND s.expires_at > ? AND u.active = 1""",
-        (_token_hash(token), now_iso()),
+        (token_hash(token), now_iso()),
     ).fetchone()
 
 
 def delete_session(conn: sqlite3.Connection, token: str | None) -> None:
     if token:
-        conn.execute("DELETE FROM sessions WHERE token_hash = ?", (_token_hash(token),))
+        conn.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash(token),))
 
 
 def delete_user_sessions(conn: sqlite3.Connection, user_id: int, keep_token: str | None = None) -> None:
     if keep_token:
-        conn.execute("DELETE FROM sessions WHERE user_id = ? AND token_hash != ?", (user_id, _token_hash(keep_token)))
+        conn.execute("DELETE FROM sessions WHERE user_id = ? AND token_hash != ?", (user_id, token_hash(keep_token)))
     else:
         conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
 

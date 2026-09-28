@@ -1,6 +1,7 @@
 """Sign-in codes by text message, via the Twilio Verify API.
 
-Pass `transport` to point the httpx client at a fake in tests (same pattern as app/ai.py: call_model).
+One short-lived httpx client per call, with a timeout, and every number redacted before it is logged.
+Pass `transport` to point that client at an httpx.MockTransport in tests, so no test touches the network.
 """
 from __future__ import annotations
 
@@ -12,7 +13,7 @@ from .config import get_config
 
 BASE_URL = "https://verify.twilio.com/v2/Services"
 TIMEOUT = 10
-log = logging.getLogger(__name__)
+log = logging.getLogger("house_run_sheet")  # the one logger main.log_through_uvicorn gives a handler
 
 
 class SmsError(Exception):

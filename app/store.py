@@ -99,8 +99,18 @@ def list_visits(conn: sqlite3.Connection, days_back: int = 400) -> dict:
 # ---------- meal plans ----------
 def save_plan(conn: sqlite3.Connection, week: str, plan: dict, source: str, note: str, user_id: int | None,
               got: dict | None = None) -> None:
-    """Replace a week's menu and shopping list. Call inside a transaction."""
-    data = {"sessions": plan["sessions"], "leftovers": plan.get("leftovers", [])}
+    """Replace a week's menu and shopping list from a seed file. Call inside a transaction.
+
+    Only `python -m app.cli import-seed` uses this now: the seed JSON has a week-level "leftovers"
+    list and items marked for: "both". Leftovers move onto the week's last cook — Friday when it is
+    present, otherwise Tuesday — the same rule migration 004 applies, so importing the seed and
+    migrating an old database give the same shape.
+    """
+    sessions = {k: dict(v) for k, v in (plan.get("sessions") or {}).items() if isinstance(v, dict)}
+    last = "fri" if "fri" in sessions else "tue"
+    for k, sess in sessions.items():
+        sess["leftovers"] = list(sess.get("leftovers") or (plan.get("leftovers", []) if k == last else []))
+    data = {"sessions": sessions}
     conn.execute("DELETE FROM meal_plans WHERE week = ?", (week,))  # cascades shopping_items
     conn.execute("INSERT INTO meal_plans (week, data, source, note, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?)",
                  (week, json.dumps(data), source, note, now_iso(), user_id))
@@ -114,15 +124,53 @@ def save_plan(conn: sqlite3.Connection, week: str, plan: dict, source: str, note
         )
 
 
+def save_session(conn: sqlite3.Connection, week: str, session: str, session_data: dict, shopping: list[dict],
+                 user_id: int | None) -> None:
+    """Merge one prep session into a week. Call inside a transaction.
+
+    The week's other session, and its shopping ticks, are left exactly as they were: only this
+    session's meal_plans entry and its shopping_items rows are replaced. An existing row keeps its
+    original source, note and created_by — only data and created_at move. Rows marked for "both"
+    only exist in weeks planned before the connector; re-planning either session drops them, since
+    stale shared items on both lists is worse than the other session briefly missing them.
+    """
+    row = conn.execute("SELECT data FROM meal_plans WHERE week = ?", (week,)).fetchone()
+    if row is None:
+        data = {"sessions": {}}
+        conn.execute("INSERT INTO meal_plans (week, data, source, note, created_at, created_by) "
+                     "VALUES (?, ?, 'Claude', '', ?, ?)", (week, json.dumps(data), now_iso(), user_id))
+    else:
+        data = json.loads(row["data"])
+    data.setdefault("sessions", {})[session] = session_data
+    conn.execute("UPDATE meal_plans SET data = ?, created_at = ? WHERE week = ?",
+                 (json.dumps(data), now_iso(), week))
+    conn.execute("DELETE FROM shopping_items WHERE week = ? AND for_session IN (?, 'both')", (week, session))
+    for n, i in enumerate(shopping):
+        conn.execute(
+            """INSERT INTO shopping_items (week, id, item, buy, aisle, for_session, stock, search, got, sort_order)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)""",
+            (week, i["id"], i["item"], i["buy"], i["aisle"], session, 1 if i["stock"] else 0, i["search"], n),
+        )
+
+
 def get_plan(conn: sqlite3.Connection, week: str, include_shopping: bool) -> dict | None:
     row = conn.execute("SELECT * FROM meal_plans WHERE week = ?", (week,)).fetchone()
     if not row:
         return None
     data = json.loads(row["data"])
+    sessions = data.get("sessions") or {}
+    for sess in sessions.values():
+        # Leftovers belong to the session that produced them (migration 004). A row written before
+        # that still reads cleanly.
+        if isinstance(sess, dict):
+            sess.setdefault("leftovers", [])
     plan = {"week": week, "source": row["source"], "note": row["note"], "createdAt": row["created_at"],
-            "sessions": data.get("sessions", {}), "leftovers": data.get("leftovers", [])}
+            "sessions": sessions}
     if include_shopping:
-        items = conn.execute("SELECT * FROM shopping_items WHERE week = ? ORDER BY sort_order", (week,)).fetchall()
+        # sort_order is per session, so a week with both sessions saved has two rows for every position:
+        # id breaks the tie, or the list would shuffle between reads.
+        items = conn.execute("SELECT * FROM shopping_items WHERE week = ? ORDER BY sort_order, id",
+                             (week,)).fetchall()
         plan["shopping"] = [{"id": r["id"], "item": r["item"], "buy": r["buy"], "aisle": r["aisle"],
                              "for": r["for_session"], "stock": bool(r["stock"]), "search": r["search"]}
                             for r in items]

@@ -113,6 +113,8 @@ export interface PlanSession {
   covers: string;
   timeline: string[];
   recipes: Partial<Record<Slot, Recipe>>;
+  /** What this session's cook is expected to leave behind, for the next session to use up. */
+  leftovers: string[];
 }
 
 export interface ShoppingItem {
@@ -133,23 +135,22 @@ export interface Plan {
   note: string;
   createdAt: string;
   sessions: Partial<Record<SessionKey, PlanSession>>;
-  leftovers: string[];
   /** Owner-only. */
   shopping?: ShoppingItem[];
   /** Owner-only: itemId -> true. */
   got?: Record<string, boolean>;
 }
 
-export type JobStatus = "running" | "cancelling" | "done" | "cancelled" | "error";
-
-export interface Job {
-  id: number;
-  week: string;
-  status: JobStatus;
-  progressChars: number;
-  titles: string[];
-  error: string | null;
+/** One OAuth grant chain (a "family") behind the Claude connector — spec §7.8. */
+export interface Connection {
+  family: string;
+  clientName: string;
+  connectedAt: string;
+  lastUsedAt: string | null;
 }
+
+/** GET /api/oauth/connections. `mcpUrl` rides along here so staff never see it. */
+export interface ConnectionsResponse { connections: Connection[]; mcpUrl: string }
 
 export interface MeResponse { me: Me }
 export interface StateResponse {
@@ -168,4 +169,3 @@ export interface PhotoResponse { photo: Photo }
 export interface OkResponse { ok: true }
 /** POST /api/visits/{date}/extras returns the new row id as a string. */
 export interface ExtraCreated { id: string }
-export interface JobStarted { jobId: number }

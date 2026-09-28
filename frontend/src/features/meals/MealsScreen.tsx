@@ -3,14 +3,12 @@ import { Card } from "../../components/Card";
 import { Chips } from "../../components/Chips";
 import { addDays, fmtLong } from "../../lib/dates";
 import { useApp, useIsOwner, useSettings } from "../../state/AppState";
-import { GenPanel } from "./GenPanel";
 import { RecipeCard } from "./RecipeCard";
-import { useGeneration } from "./useGeneration";
 import { WeekNav } from "./WeekNav";
 
 const SLOT_LABEL: Record<Slot, string> = {
-  breakfast: "Breakfast · overnight oats",
-  main: "Main · 3 a day",
+  breakfast: "Breakfast",
+  main: "Main",
   dessert: "Dessert",
 };
 const SLOTS: Slot[] = ["breakfast", "main", "dessert"];
@@ -20,9 +18,6 @@ export function MealsScreen() {
   const { state, dispatch } = useApp();
   const settings = useSettings();
   const isOwner = useIsOwner();
-  // Lives here, not in GenPanel: the panel unmounts when a week change clears `loaded`, and a job in
-  // flight must not die with it. This screen stays mounted for the app's lifetime under Activity.
-  const { gen, start, stop } = useGeneration();
   const week = state.ui.week;
   const session = state.ui.session;
   const plan = state.plans[week] ?? null;
@@ -37,7 +32,9 @@ export function MealsScreen() {
         <div className="empty">Loading menu…</div>
       ) : !plan ? (
         <Card className="empty">
-          No menu for this week yet.{isOwner ? "" : " Owen will add one before the visit."}
+          {isOwner
+            ? "No menu for this week yet — plan it in Claude and it'll appear here."
+            : "No menu for this week yet. Owen will add one before the visit."}
         </Card>
       ) : (
         <>
@@ -84,8 +81,6 @@ export function MealsScreen() {
           )}
         </>
       )}
-
-      {isOwner && loaded ? <GenPanel hasPlan={plan !== null} gen={gen} start={start} stop={stop} /> : null}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import type { ShoppingItem } from "../../api/types";
+import type { SessionKey, ShoppingItem } from "../../api/types";
 import { Button } from "../../components/Button";
 import { Card } from "../../components/Card";
 import { Check } from "../../components/Check";
@@ -11,8 +11,11 @@ import { useApp } from "../../state/AppState";
 import { useToast } from "../../state/useToast";
 import { WeekNav } from "../meals/WeekNav";
 
+const SESSIONS: SessionKey[] = ["tue", "fri"];
+const SESSION_LABEL: Record<SessionKey, string> = { tue: "After Tuesday's cook", fri: "After Friday's cook" };
+
 export function ShoppingScreen() {
-  const { state, dispatch, mutate, goToTab } = useApp();
+  const { state, dispatch, mutate } = useApp();
   const { toast } = useToast();
   const week = state.ui.week;
   const filter = state.ui.shopFilter;
@@ -65,13 +68,7 @@ export function ShoppingScreen() {
     return (
       <div className="section">
         <WeekNav />
-        <Card className="empty">
-          No menu for this week yet. Create one on the{" "}
-          <button type="button" className="linkish" onClick={() => goToTab("meals")}>
-            Meals
-          </button>{" "}
-          tab.
-        </Card>
+        <Card className="empty">No menu for this week yet — plan it in Claude and the shopping list will appear here.</Card>
       </div>
     );
   }
@@ -159,17 +156,22 @@ export function ShoppingScreen() {
         </div>
       ) : null}
 
-      {plan.leftovers.length > 0 ? (
-        <Card>
-          <div className="label">Expected leftovers</div>
-          <ul className="steps mt8">
-            {plan.leftovers.map((item, index) => (
-              <li key={index}>{item}</li>
-            ))}
-          </ul>
-          <p className="small muted mt8">Next week's menu is planned to use these up first.</p>
-        </Card>
-      ) : null}
+      {/* Not filtered by the Everything / Deliver by Tue / Friday-only chips: that filter picks which
+          grocery order you are placing, while leftovers describe what the cooking leaves behind. */}
+      {SESSIONS.map((key) => {
+        const leftovers = plan.sessions[key]?.leftovers ?? [];
+        return leftovers.length > 0 ? (
+          <Card key={key}>
+            <div className="label">{SESSION_LABEL[key]}</div>
+            <ul className="steps mt8">
+              {leftovers.map((item, index) => (
+                <li key={index}>{item}</li>
+              ))}
+            </ul>
+            <p className="small muted mt8">The next session's menu is planned to use these up first.</p>
+          </Card>
+        ) : null;
+      })}
     </div>
   );
 }

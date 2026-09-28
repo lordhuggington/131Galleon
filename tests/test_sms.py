@@ -12,7 +12,7 @@ TWILIO_ENV = {"TWILIO_ACCOUNT_SID": "AC123", "TWILIO_AUTH_TOKEN": "tok", "TWILIO
 
 
 class _CollectHandler(logging.Handler):
-    """Keeps app.sms warnings out of the test output, and lets a test read them back."""
+    """Keeps app/sms.py's warnings out of the test output, and lets a test read them back."""
 
     def __init__(self, sink: list[str]):
         super().__init__()
@@ -27,7 +27,7 @@ class SmsTestBase(unittest.TestCase):
         self._saved = {k: os.environ.get(k) for k in TWILIO_ENV}
         os.environ.update(TWILIO_ENV)
         self.logged: list[str] = []
-        self._logger = logging.getLogger("app.sms")
+        self._logger = logging.getLogger("house_run_sheet")  # where app/sms.py logs now
         self._handler = _CollectHandler(self.logged)
         self._logger.addHandler(self._handler)
 
