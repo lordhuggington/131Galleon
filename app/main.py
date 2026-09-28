@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 from pathlib import Path
 
 from starlette.applications import Starlette
@@ -11,7 +12,7 @@ from starlette.staticfiles import StaticFiles
 
 from .api import routes
 from .config import get_config
-from .db import connect, migrate, now_iso
+from .db import connect, migrate
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 log = logging.getLogger("house_run_sheet")
@@ -53,13 +54,15 @@ class SecurityHeaders:
 
 @contextlib.asynccontextmanager
 async def lifespan(app):
-    Path(get_config().photos_dir).mkdir(parents=True, exist_ok=True)
+    cfg = get_config()
+    Path(cfg.photos_dir).mkdir(parents=True, exist_ok=True)
+    if not os.environ.get("HRS_PUBLIC_URL"):
+        # Local development keeps working; a misconfigured droplet is loud in the logs instead of
+        # silently advertising localhost to Claude.
+        log.warning("HRS_PUBLIC_URL is not set; the Claude connector will advertise %s", cfg.public_url)
     conn = connect()
     try:
         version = migrate(conn)
-        # Jobs can't survive a restart; don't leave them spinning forever.
-        conn.execute("UPDATE ai_jobs SET status = 'error', error = 'The server restarted while writing this menu. Try again.', "
-                     "finished_at = ? WHERE status IN ('running', 'cancelling')", (now_iso(),))
         log.info("database ready at schema version %s", version)
     finally:
         conn.close()

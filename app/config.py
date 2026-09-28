@@ -15,8 +15,7 @@ def _bool(name: str, default: bool) -> bool:
 @dataclass(frozen=True)
 class Config:
     db_path: str
-    anthropic_api_key: str
-    anthropic_model: str
+    public_url: str
     cookie_secure: bool
     session_days: int
     twilio_account_sid: str
@@ -33,8 +32,9 @@ class Config:
 def get_config() -> Config:
     return Config(
         db_path=os.environ.get("HRS_DB_PATH", "data/house.db"),
-        anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
-        anthropic_model=os.environ.get("ANTHROPIC_MODEL", "claude-opus-5-5"),
+        # The address Claude reaches this app on. Every OAuth metadata URL and the connector URL are
+        # built from it, so a trailing slash would produce '…//mcp'.
+        public_url=os.environ.get("HRS_PUBLIC_URL", "http://localhost:8000").rstrip("/"),
         cookie_secure=_bool("HRS_COOKIE_SECURE", True),
         session_days=int(os.environ.get("HRS_SESSION_DAYS", "30")),
         twilio_account_sid=os.environ.get("TWILIO_ACCOUNT_SID", "").strip(),

@@ -14,7 +14,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Route
 
-from . import ai, sms, store
+from . import sms, store
 from .auth import (COOKIE_NAME, ROLES, create_session, delete_session, delete_user_sessions, hash_password,
                    normalize_phone, password_problem, send_throttle, sms_check_throttle, throttle, user_for_token,
                    verify_password)
@@ -519,38 +519,6 @@ def set_got(request, conn, user, body):
     return {"ok": True}
 
 
-@endpoint(role="owner")
-def generate(request, conn, user, body):
-    w = path_week(request)
-    note = s(body, "note", 500)
-    running = conn.execute("SELECT id FROM ai_jobs WHERE status IN ('running', 'cancelling')").fetchone()
-    if running:
-        return JSONResponse({"error": "A menu is already being written.", "jobId": running["id"]}, status_code=409)
-    return {"jobId": ai.start_job(conn, w, note, user["id"])}
-
-
-def _job_id(request) -> int:
-    try:
-        return int(request.path_params["job_id"])
-    except ValueError:
-        raise ApiError(404, "That job doesn't exist.")
-
-
-@endpoint(role="owner")
-def get_job(request, conn, user, _body):
-    r = conn.execute("SELECT * FROM ai_jobs WHERE id = ?", (_job_id(request),)).fetchone()
-    if not r:
-        raise ApiError(404, "That job doesn't exist.")
-    return {"id": r["id"], "week": r["week"], "status": r["status"], "progressChars": r["progress_chars"],
-            "titles": json.loads(r["titles"]), "error": r["error"]}
-
-
-@endpoint(role="owner")
-def cancel_job(request, conn, user, _body):
-    conn.execute("UPDATE ai_jobs SET status = 'cancelling' WHERE id = ? AND status = 'running'", (_job_id(request),))
-    return {"ok": True}
-
-
 # ---------- people (owner) ----------
 def user_dict(r) -> dict:
     return {"id": r["id"], "username": r["username"], "displayName": r["display_name"], "role": r["role"],
@@ -720,9 +688,6 @@ routes = [
     Route("/api/plans/{week}", delete_plan, methods=["DELETE"]),
     Route("/api/plans/{week}/recipes/{session}/{slot}", set_fav, methods=["PATCH"]),
     Route("/api/plans/{week}/shopping/{item_id}", set_got, methods=["PATCH"]),
-    Route("/api/plans/{week}/generate", generate, methods=["POST"]),
-    Route("/api/jobs/{job_id}", get_job),
-    Route("/api/jobs/{job_id}/cancel", cancel_job, methods=["POST"]),
     Route("/api/users", list_users),
     Route("/api/users", create_user, methods=["POST"]),
     Route("/api/users/{user_id}", update_user, methods=["PATCH"]),
