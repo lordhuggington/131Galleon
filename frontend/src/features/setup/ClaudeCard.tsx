@@ -75,10 +75,10 @@ export function ClaudeCard() {
       await api<OkResponse>("DELETE", `/api/oauth/connections/${encodeURIComponent(family)}`);
       setError("");
       toast("Disconnected");
+      await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't disconnect that.");
     }
-    await load();
   }
 
   return (
