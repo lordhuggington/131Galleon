@@ -102,6 +102,9 @@ def _save_session(conn, args: dict, user) -> dict:
 
 
 HANDLERS = {"get_brief": _get_brief, "save_session": _save_session}
+# A tool listed with no handler would reach Claude as "Something went wrong saving that session"; fail
+# at import instead.
+assert set(HANDLERS) == set(TOOL_NAMES), "every listed tool needs a handler"
 
 
 def call_tool(name: str, args: dict, user) -> dict:
@@ -137,8 +140,6 @@ async def mcp_post(request: Request) -> Response:
     if refusal is not None:
         return refusal
     asked_version = request.headers.get("mcp-protocol-version")
-    if asked_version:
-        log.info("MCP request with MCP-Protocol-Version: %s", asked_version)
     try:
         msg = json.loads(raw)
     except ValueError:
@@ -148,16 +149,26 @@ async def mcp_post(request: Request) -> Response:
     if not isinstance(msg, dict) or msg.get("jsonrpc") != "2.0":
         return jsonrpc_error(None, -32600, "Invalid request.")
     rid = msg.get("id")
+    # JSON-RPC 2.0 §4: an id is a string, a number or null — and True is an int to isinstance.
+    if isinstance(rid, bool) or not isinstance(rid, (str, int, float, type(None))):
+        return jsonrpc_error(None, -32600, "Invalid request.")
+    method = msg.get("method")
+    if asked_version:
+        # One line per handshake is worth having; one per ping and per tool call is noise.
+        log.log(logging.INFO if method == "initialize" else logging.DEBUG,
+                "MCP request with MCP-Protocol-Version: %s", asked_version)
     params = msg.get("params") if isinstance(msg.get("params"), dict) else {}
     meta = params.get("_meta")
+    # A handshake-less client from a newer MCP era. Name what we speak so it can fall back. The header
+    # arm exempts initialize: an old-era client that guesses that header wrong still reaches the
+    # handshake, whose answer names a version it knows. The _meta arm applies to every method.
     if ((isinstance(meta, dict) and "io.modelcontextprotocol/protocolVersion" in meta)
-            or (asked_version and asked_version not in SUPPORTED_PROTOCOL_VERSIONS)):
-        # A handshake-less client from a newer MCP era. Name what we speak so it can fall back.
+            or (asked_version and asked_version not in SUPPORTED_PROTOCOL_VERSIONS
+                and method != "initialize")):
         return jsonrpc_error(rid, -32600, UNSUPPORTED_ERA, status=400)
     if rid is None:
         # A notification: nothing to answer, whatever the method. notifications/initialized lands here.
         return Response(status_code=202)
-    method = msg.get("method")
     if method == "initialize":
         asked = params.get("protocolVersion")
         return jsonrpc_result(rid, {

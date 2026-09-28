@@ -13,6 +13,7 @@ import time
 import unittest
 import urllib.parse
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 H = {"x-hrs": "1"}
@@ -187,6 +188,48 @@ class McpTest(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json()["result"], {})
 
+    def test_initialize_is_answered_whatever_the_version_header_says(self):
+        """An old-era client that guesses the header wrong still gets a handshake to fall back from."""
+        r = self.c.post("/mcp", content=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                                                    "params": {"protocolVersion": "2025-06-18"}}),
+                        headers={**JSON_CT, "authorization": "Bearer " + self.token,
+                                 "mcp-protocol-version": "2026-07-28"})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["result"]["protocolVersion"], "2025-06-18")
+        r = self.c.post("/mcp", content=json.dumps({"jsonrpc": "2.0", "id": 2, "method": "initialize"}),
+                        headers={**JSON_CT, "authorization": "Bearer " + self.token,
+                                 "mcp-protocol-version": "2026-07-28"})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["result"]["protocolVersion"], "2025-11-25")
+        # the exemption is the header arm only: _meta still refuses initialize itself
+        r = self.c.post("/mcp", content=json.dumps(
+            {"jsonrpc": "2.0", "id": 3, "method": "initialize",
+             "params": {"_meta": {"io.modelcontextprotocol/protocolVersion": "2026-07-28"}}}),
+            headers={**JSON_CT, "authorization": "Bearer " + self.token})
+        self.assertEqual(r.status_code, 400, r.text)
+        self.assertEqual(r.json()["error"]["code"], -32600)
+        # …and any other method with that header is still refused
+        r = self.c.post("/mcp", content=json.dumps({"jsonrpc": "2.0", "id": 4, "method": "ping"}),
+                        headers={**JSON_CT, "authorization": "Bearer " + self.token,
+                                 "mcp-protocol-version": "2026-07-28"})
+        self.assertEqual(r.status_code, 400, r.text)
+        self.assertEqual(r.json()["error"]["code"], -32600)
+
+    def test_the_version_header_is_logged_once_per_handshake(self):
+        """One line per initialize is worth having; one per ping and per tool call is noise."""
+        with self.assertLogs("house_run_sheet", "INFO") as cm:
+            r = self.c.post("/mcp", content=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                                                        "params": {"protocolVersion": "2025-06-18"}}),
+                            headers={**JSON_CT, "authorization": "Bearer " + self.token,
+                                     "mcp-protocol-version": "2025-06-18"})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertTrue(any("MCP-Protocol-Version: 2025-06-18" in line for line in cm.output), cm.output)
+        with self.assertNoLogs("house_run_sheet", "INFO"):
+            r = self.c.post("/mcp", content=json.dumps({"jsonrpc": "2.0", "id": 2, "method": "ping"}),
+                            headers={**JSON_CT, "authorization": "Bearer " + self.token,
+                                     "mcp-protocol-version": "2025-06-18"})
+        self.assertEqual(r.status_code, 200, r.text)
+
     def test_ping_answers_an_empty_result(self):
         r = self.rpc({"jsonrpc": "2.0", "id": "p1", "method": "ping"})
         self.assertEqual(r.json(), {"jsonrpc": "2.0", "id": "p1", "result": {}})
@@ -334,12 +377,73 @@ class McpTest(unittest.TestCase):
                 self.assertEqual(r.headers["allow"], "POST")
                 self.assertEqual(r.json(), {"error": "method_not_allowed"})
 
+    def test_a_non_scalar_id_is_an_invalid_request(self):
+        """JSON-RPC 2.0 §4: an id is a string, a number or null. Answer with id null, not with theirs."""
+        for rid in ({"a": 1}, [1], True, False):
+            with self.subTest(id=rid):
+                r = self.rpc({"jsonrpc": "2.0", "id": rid, "method": "ping"})
+                self.assertEqual(r.status_code, 200, r.text)
+                self.assertEqual(r.json(), {"jsonrpc": "2.0", "id": None,
+                                            "error": {"code": -32600, "message": "Invalid request."}})
+        for rid in (7, "x", 1.5):
+            with self.subTest(id=rid):
+                r = self.rpc({"jsonrpc": "2.0", "id": rid, "method": "ping"})
+                self.assertEqual(r.json(), {"jsonrpc": "2.0", "id": rid, "result": {}})
+
     def test_a_huge_body_is_refused(self):
         r = self.c.post("/mcp", content=b"x" * 300_000,
                         headers={**JSON_CT, "authorization": "Bearer " + self.token})
         self.assertEqual(r.status_code, 413)
         self.assertEqual(r.json(), {"jsonrpc": "2.0", "id": None,
                                     "error": {"code": -32600, "message": "Request body too large."}})
+
+    def oversize_chunks(self):
+        """More than MAX_BODY_BYTES, handed to httpx as a generator so it sends no Content-Length."""
+        from app.mcp import MAX_BODY_BYTES
+        sent = 0
+        while sent <= MAX_BODY_BYTES:
+            chunk = b"x" * 64_000
+            sent += len(chunk)
+            yield chunk
+
+    def test_an_oversize_chunked_body_is_refused_from_the_stream(self):
+        """No Content-Length to check, so the cap has to come from the bytes as they arrive."""
+        r = self.c.post("/mcp", content=self.oversize_chunks(),
+                        headers={**JSON_CT, "authorization": "Bearer " + self.token})
+        self.assertNotIn("content-length", {k.lower() for k in r.request.headers})
+        self.assertEqual(r.status_code, 413)
+        self.assertEqual(r.json(), {"jsonrpc": "2.0", "id": None,
+                                    "error": {"code": -32600, "message": "Request body too large."}})
+
+    def test_size_is_checked_before_the_bearer_and_the_bearer_before_the_parse(self):
+        """A stranger can't make a worker buffer megabytes, and a token-less client gets the handshake."""
+        r = self.c.post("/mcp", content=b"x" * 300_000, headers=JSON_CT)
+        self.assertEqual(r.status_code, 413)
+        self.assertEqual(r.json()["error"]["message"], "Request body too large.")
+        self.assertNotIn("www-authenticate", r.headers)
+        r = self.c.post("/mcp", content=b"{not json", headers=JSON_CT)
+        self.assertEqual(r.status_code, 401)
+        self.assertEqual(r.json(), {"error": "unauthorized"})
+        self.assertIn("resource_metadata", r.headers["www-authenticate"])
+
+    def test_an_unexpected_failure_is_a_tool_error_without_a_stack_trace(self):
+        from app import mcp
+
+        def explode(*args):
+            return 1 / 0
+
+        with mock.patch.dict(mcp.HANDLERS, {"get_brief": explode}):
+            with self.assertLogs("house_run_sheet", "ERROR") as cm:
+                r = self.rpc({"jsonrpc": "2.0", "id": 11, "method": "tools/call",
+                              "params": {"name": "get_brief", "arguments": {}}})
+        self.assertEqual(r.status_code, 200, r.text)
+        result = r.json()["result"]
+        self.assertIs(result["isError"], True)
+        self.assertEqual(result["content"][0]["text"], "Something went wrong saving that session. Try again.")
+        self.assertNotIn("Traceback", r.text)
+        self.assertNotIn("ZeroDivisionError", r.text)
+        self.assertIn("MCP tool get_brief failed", cm.output[0])
+        self.assertIn("ZeroDivisionError", cm.output[0])  # the trace goes to the log, not to the chat
 
 
 if __name__ == "__main__":
