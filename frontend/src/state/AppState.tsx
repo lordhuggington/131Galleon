@@ -23,7 +23,7 @@ export interface UiState {
   week: string;
   session: SessionKey;
   shopFilter: ShopFilter;
-  /** Inline confirmation key, e.g. "del:t07", "pw:3", "photo:12", "regen". */
+  /** Inline confirmation key, e.g. "del:t07", "pw:3", "photo:12". */
   confirm: string | null;
   /** Shopping list text shown when the clipboard is blocked. */
   copyText: string | null;

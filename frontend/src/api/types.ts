@@ -140,17 +140,6 @@ export interface Plan {
   got?: Record<string, boolean>;
 }
 
-export type JobStatus = "running" | "cancelling" | "done" | "cancelled" | "error";
-
-export interface Job {
-  id: number;
-  week: string;
-  status: JobStatus;
-  progressChars: number;
-  titles: string[];
-  error: string | null;
-}
-
 export interface MeResponse { me: Me }
 export interface StateResponse {
   me: Me;
@@ -168,4 +157,3 @@ export interface PhotoResponse { photo: Photo }
 export interface OkResponse { ok: true }
 /** POST /api/visits/{date}/extras returns the new row id as a string. */
 export interface ExtraCreated { id: string }
-export interface JobStarted { jobId: number }

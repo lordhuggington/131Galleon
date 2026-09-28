@@ -134,8 +134,6 @@ form.task { cursor: auto }
 .store b { color: var(--rust) }
 .star { background: none; border: 2px solid var(--line); border-radius: 999px; padding: 6px 12px; font-size: 13px; font-weight: 700; color: var(--muted); min-height: 36px }
 .star[aria-pressed="true"] { color: var(--orange); border-color: var(--orange); background: var(--orange-soft) }
-.gen-status { font-size: 14px }
-.gen-titles { margin: 6px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px }
 
 /* shopping */
 .shop-item { display: grid; grid-template-columns: 34px 1fr auto; gap: 10px; align-items: center; padding: 10px 16px; border-top: 2px solid var(--line); cursor: pointer }
