@@ -260,8 +260,9 @@ def _num(v) -> float:
 
 
 def _round(x: float) -> int:
-    """JavaScript's Math.round (half up), so an error line and the Meals pill can never disagree."""
-    return math.floor(x + 0.5)
+    """JavaScript's Math.round (half up), so an error line and the Meals pill can never disagree;
+    a sum that overflowed to inf lands on 0, so the caller reports a macro line instead of raising."""
+    return math.floor(x + 0.5) if math.isfinite(x) else 0
 
 
 def normalize_session(args) -> tuple[dict, list[dict]]:

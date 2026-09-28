@@ -284,12 +284,18 @@ class MenuTest(unittest.TestCase):
         portions_line = "breakfast: portions must be 1 or more."           # an unusable count falls back to 0
         huge = "9" * 400                                                   # a valid JSON integer, far beyond a float
         cases = [("kcal", "Infinity", kcal_line), ("kcal", "NaN", kcal_line), ("kcal", "1e400", kcal_line),
-                 ("kcal", '"Infinity"', kcal_line), ("kcal", huge, kcal_line),
+                 ("kcal", '"Infinity"', kcal_line), ("kcal", huge, kcal_line), ("kcal sum", "1e308", kcal_line),
                  ("portions", "Infinity", portions_line), ("portions", huge, portions_line)]
         for field, literal, expected in cases:
             with self.subTest(field=field, value=literal[:20]):
                 args = self.payload()
-                if field == "kcal":
+                if field == "kcal sum":
+                    # Each value is a finite float; it is their sum that overflows to inf (ruling R16a).
+                    ings = args["recipes"]["breakfast"]["ingredients"]
+                    ings.append(dict(ings[0]))
+                    for i in ings:
+                        i["kcal"] = -12345
+                elif field == "kcal":
                     args["recipes"]["breakfast"]["ingredients"][0]["kcal"] = -12345
                 else:
                     args["recipes"]["breakfast"]["portions"] = -12345
