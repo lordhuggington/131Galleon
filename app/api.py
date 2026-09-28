@@ -5,6 +5,7 @@ import contextlib
 import json
 import re
 import secrets
+import time
 from datetime import date
 from pathlib import Path
 from typing import Any, Callable
@@ -25,6 +26,7 @@ DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 CODE_RE = re.compile(r"^\d{4,10}$")
 USERNAME_RE = re.compile(r"^[a-z0-9._-]{2,64}$")
 DOOR_CODE_RE = re.compile(r"^[0-9]{4,8}$")  # ASCII only: a keypad has no Unicode digits
+FAMILY_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")  # oauth_tokens.family is secrets.token_urlsafe(16)
 FREQS = ("visit", "weekly", "fortnightly", "monthly")
 DAYS = ("any", "tue", "fri")
 SESSIONS = ("tue", "fri")
@@ -519,6 +521,42 @@ def set_got(request, conn, user, body):
     return {"ok": True}
 
 
+# ---------- the Claude connector (owner) ----------
+@endpoint(role="owner")
+def list_connections(request, conn, user, _body):
+    """One entry per live grant chain. mcpUrl rides here so staff never see the connector URL."""
+    rows = conn.execute(
+        """SELECT t.family AS family, MIN(t.created_at) AS connected_at,
+                  MAX(t.last_used_at) AS last_used_at, MAX(c.client_name) AS client_name
+             FROM oauth_tokens t
+             LEFT JOIN oauth_clients c ON c.client_id = t.client_id
+            WHERE t.user_id = ?
+              AND t.family IN (SELECT family FROM oauth_tokens
+                                WHERE user_id = ? AND kind = 'refresh'
+                                  AND revoked_at IS NULL AND expires_at > ?)
+            GROUP BY t.family
+            ORDER BY connected_at DESC""",
+        (user["id"], user["id"], int(time.time()))).fetchall()
+    return {"connections": [{"family": r["family"], "clientName": r["client_name"] or "Claude",
+                             "connectedAt": r["connected_at"], "lastUsedAt": r["last_used_at"]}
+                            for r in rows],
+            "mcpUrl": f"{get_config().public_url}/mcp"}
+
+
+@endpoint(role="owner")
+def delete_connection(request, conn, user, _body):
+    family = request.path_params["family"]
+    missing = ApiError(404, "That connection doesn't exist.")
+    if not FAMILY_RE.match(family):
+        raise missing
+    if not conn.execute("SELECT 1 FROM oauth_tokens WHERE family = ? AND user_id = ?",
+                        (family, user["id"])).fetchone():
+        raise missing
+    conn.execute("UPDATE oauth_tokens SET revoked_at = ? WHERE family = ? AND user_id = ? AND revoked_at IS NULL",
+                 (now_iso(), family, user["id"]))
+    return {"ok": True}
+
+
 # ---------- people (owner) ----------
 def user_dict(r) -> dict:
     return {"id": r["id"], "username": r["username"], "displayName": r["display_name"], "role": r["role"],
@@ -688,6 +726,8 @@ routes = [
     Route("/api/plans/{week}", delete_plan, methods=["DELETE"]),
     Route("/api/plans/{week}/recipes/{session}/{slot}", set_fav, methods=["PATCH"]),
     Route("/api/plans/{week}/shopping/{item_id}", set_got, methods=["PATCH"]),
+    Route("/api/oauth/connections", list_connections),
+    Route("/api/oauth/connections/{family}", delete_connection, methods=["DELETE"]),
     Route("/api/users", list_users),
     Route("/api/users", create_user, methods=["POST"]),
     Route("/api/users/{user_id}", update_user, methods=["PATCH"]),

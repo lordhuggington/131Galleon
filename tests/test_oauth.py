@@ -430,6 +430,57 @@ class OAuthTest(unittest.TestCase):
                          'scope="menus"')
         self.assertEqual(json.loads(r.body), {"error": "invalid_token"})
 
+    # ---- the connections list ----
+    def test_connections_lists_the_grant(self):
+        self.dance()
+        r = self.c.get("/api/oauth/connections")
+        self.assertEqual(r.status_code, 200, r.text)
+        body = r.json()
+        self.assertEqual(body["mcpUrl"], "http://testserver/mcp")
+        self.assertEqual(len(body["connections"]), 1)
+        entry = body["connections"][0]
+        self.assertEqual(entry["clientName"], "Claude")
+        self.assertTrue(entry["connectedAt"])
+        self.assertIsNone(entry["lastUsedAt"])  # the access token has not been used yet
+        self.assertRegex(entry["family"], r"^[A-Za-z0-9_-]{8,64}$")
+
+    def test_disconnecting_revokes_the_whole_family(self):
+        from app import oauth
+        from app.db import connect
+        tokens = self.dance()
+        family = self.c.get("/api/oauth/connections").json()["connections"][0]["family"]
+        conn = connect()
+        try:
+            self.assertIsNotNone(oauth.owner_for_bearer(conn, "Bearer " + tokens["access_token"]))
+            r = self.c.delete(f"/api/oauth/connections/{family}", headers=H)
+            self.assertEqual(r.status_code, 200, r.text)
+            self.assertEqual(r.json(), {"ok": True})
+            self.assertIsNone(oauth.owner_for_bearer(conn, "Bearer " + tokens["access_token"]))
+        finally:
+            conn.close()
+        self.assertEqual(self.c.get("/api/oauth/connections").json()["connections"], [])
+        r = self.c.post("/oauth/token", data={"grant_type": "refresh_token",
+                                              "refresh_token": tokens["refresh_token"],
+                                              "client_id": tokens["client_id"]})
+        self.assertEqual(r.json()["error"], "invalid_grant")
+        for bad in ("nope", "short", "not-a-real-family"):
+            with self.subTest(family=bad):
+                r = self.c.delete(f"/api/oauth/connections/{bad}", headers=H)
+                self.assertEqual(r.status_code, 404, r.text)
+                self.assertEqual(r.json()["error"], "That connection doesn't exist.")
+
+    def test_staff_cannot_touch_connections(self):
+        self.dance()
+        family = self.c.get("/api/oauth/connections").json()["connections"][0]["family"]
+        self.c.post("/api/logout", headers=H)
+        self.login("maria")
+        r = self.c.get("/api/oauth/connections")
+        self.assertEqual(r.status_code, 403)
+        self.assertEqual(r.json()["error"], "Only an owner can do that.")
+        r = self.c.delete(f"/api/oauth/connections/{family}", headers=H)
+        self.assertEqual(r.status_code, 403)
+        self.assertEqual(r.json()["error"], "Only an owner can do that.")
+
 
 if __name__ == "__main__":
     unittest.main()

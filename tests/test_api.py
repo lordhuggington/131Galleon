@@ -269,6 +269,7 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(len(state["tasks"]), 41)
         self.assertEqual(self.c.post("/api/tasks", json={"title": "x"}, headers=H).status_code, 403)
         self.assertEqual(self.c.get("/api/users").status_code, 403)
+        self.assertEqual(self.c.get("/api/oauth/connections").status_code, 403)
         self.assertEqual(self.c.post("/api/visits/2026-09-29/extras", json={"title": "x"}, headers=H).status_code, 403)
         plan = self.c.get("/api/plans/2026-09-28").json()["plan"]
         self.assertIn("sessions", plan)
