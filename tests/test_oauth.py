@@ -1,10 +1,15 @@
 """OAuth server tests. Run with:  python3 -m unittest discover -s tests"""
 from __future__ import annotations
 
+import base64
 import contextlib
+import hashlib
 import io
+import json
 import os
+import secrets
 import tempfile
+import time
 import unittest
 import urllib.parse
 from pathlib import Path
@@ -68,6 +73,30 @@ class OAuthTest(unittest.TestCase):
     def query_of(self, response) -> dict[str, list[str]]:
         self.assertEqual(response.status_code, 302, response.text)
         return urllib.parse.parse_qs(urllib.parse.urlsplit(response.headers["location"]).query)
+
+    def pkce(self) -> tuple[str, str]:
+        """(verifier, S256 challenge) — a real pair, exactly as Claude computes it."""
+        verifier = secrets.token_urlsafe(48)
+        challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+        return verifier, challenge
+
+    def code_for(self, client_id: str, challenge: str, **overrides) -> str:
+        """Sign in as the owner and press Allow. Returns the authorization code from the redirect."""
+        self.login("owen")
+        p = self.params(client_id, code_challenge=challenge, **overrides)
+        return self.query_of(self.c.post("/oauth/authorize", data={**p, "decision": "allow"},
+                                         follow_redirects=False))["code"][0]
+
+    def dance(self) -> dict:
+        """Register, consent and exchange. The token response plus the "client_id" that earned it."""
+        client_id = self.register()
+        verifier, challenge = self.pkce()
+        code = self.code_for(client_id, challenge)
+        r = self.c.post("/oauth/token", data={"grant_type": "authorization_code", "code": code,
+                                              "client_id": client_id, "redirect_uri": CB,
+                                              "code_verifier": verifier})
+        self.assertEqual(r.status_code, 200, r.text)
+        return {**r.json(), "client_id": client_id}
 
     # ---- metadata ----
     def test_protected_resource_metadata(self):
@@ -246,6 +275,160 @@ class OAuthTest(unittest.TestCase):
         r = self.c.post("/oauth/authorize", data=p, headers={"sec-fetch-site": "same-origin"},
                         follow_redirects=False)
         self.assertEqual(r.status_code, 302, r.text)
+
+    # ---- the token endpoint ----
+    def test_the_full_dance_returns_tokens(self):
+        tokens = self.dance()
+        self.assertTrue(tokens["access_token"])
+        self.assertTrue(tokens["refresh_token"])
+        self.assertEqual(tokens["token_type"], "Bearer")
+        self.assertEqual(tokens["expires_in"], 3600)
+        self.assertEqual(tokens["scope"], "menus")
+
+    def test_a_wrong_verifier_burns_the_code(self):
+        client_id = self.register()
+        verifier, challenge = self.pkce()
+        code = self.code_for(client_id, challenge)
+        r = self.c.post("/oauth/token", data={"grant_type": "authorization_code", "code": code,
+                                              "client_id": client_id, "redirect_uri": CB,
+                                              "code_verifier": "not-the-verifier"})
+        self.assertEqual(r.status_code, 400, r.text)
+        self.assertEqual(r.json()["error"], "invalid_grant")
+        # the row is deleted, so even the right verifier can't rescue it
+        r = self.c.post("/oauth/token", data={"grant_type": "authorization_code", "code": code,
+                                              "client_id": client_id, "redirect_uri": CB,
+                                              "code_verifier": verifier})
+        self.assertEqual(r.json()["error"], "invalid_grant")
+
+    def test_a_reused_code_is_refused(self):
+        client_id = self.register()
+        verifier, challenge = self.pkce()
+        data = {"grant_type": "authorization_code", "code": self.code_for(client_id, challenge),
+                "client_id": client_id, "redirect_uri": CB, "code_verifier": verifier}
+        self.assertEqual(self.c.post("/oauth/token", data=data).status_code, 200)
+        r = self.c.post("/oauth/token", data=data)
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.json()["error"], "invalid_grant")
+
+    def test_the_code_is_bound_to_its_client_and_redirect_uri(self):
+        client_id = self.register()
+        other = self.register(name="Another app")
+        verifier, challenge = self.pkce()
+        code = self.code_for(client_id, challenge)
+        base = {"grant_type": "authorization_code", "code": code, "code_verifier": verifier}
+        r = self.c.post("/oauth/token", data={**base, "client_id": other, "redirect_uri": CB})
+        self.assertEqual(r.json()["error"], "invalid_grant")
+        r = self.c.post("/oauth/token", data={**base, "client_id": client_id,
+                                              "redirect_uri": "http://localhost:1/callback"})
+        self.assertEqual(r.json()["error"], "invalid_grant")
+        # neither attempt burned it: the honest exchange still works
+        r = self.c.post("/oauth/token", data={**base, "client_id": client_id, "redirect_uri": CB})
+        self.assertEqual(r.status_code, 200, r.text)
+
+    def test_missing_fields_are_invalid_request(self):
+        client_id = self.register()
+        r = self.c.post("/oauth/token", data={"grant_type": "authorization_code", "client_id": client_id})
+        self.assertEqual(r.json()["error"], "invalid_request")
+        r = self.c.post("/oauth/token", data={"grant_type": "refresh_token", "client_id": client_id})
+        self.assertEqual(r.json()["error"], "invalid_request")
+
+    def test_a_json_body_and_a_bad_grant_type_are_refused(self):
+        client_id = self.register()
+        r = self.c.post("/oauth/token", json={"grant_type": "refresh_token", "refresh_token": "x",
+                                              "client_id": client_id})
+        self.assertEqual(r.status_code, 400, r.text)
+        self.assertEqual(r.json()["error"], "invalid_request")
+        self.assertEqual(r.json()["error_description"],
+                         "The token endpoint takes application/x-www-form-urlencoded.")
+        r = self.c.post("/oauth/token", data={"grant_type": "password", "username": "owen",
+                                              "password": "owner-pass"})
+        self.assertEqual(r.json()["error"], "unsupported_grant_type")
+        r = self.c.post("/oauth/token", data={"grant_type": "authorization_code", "code": "x",
+                                              "client_id": "never-registered", "redirect_uri": CB,
+                                              "code_verifier": "y"})
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.json()["error"], "invalid_client")
+
+    def test_refresh_rotates_the_pair(self):
+        tokens = self.dance()
+        r = self.c.post("/oauth/token", data={"grant_type": "refresh_token",
+                                              "refresh_token": tokens["refresh_token"],
+                                              "client_id": tokens["client_id"]})
+        self.assertEqual(r.status_code, 200, r.text)
+        fresh = r.json()
+        self.assertNotEqual(fresh["refresh_token"], tokens["refresh_token"])
+        self.assertNotEqual(fresh["access_token"], tokens["access_token"])
+        self.assertEqual(fresh["expires_in"], 3600)
+        self.assertEqual(fresh["scope"], "menus")
+        self.assertEqual(fresh["token_type"], "Bearer")
+        r = self.c.post("/oauth/token", data={"grant_type": "refresh_token",
+                                              "refresh_token": tokens["refresh_token"],
+                                              "client_id": tokens["client_id"]})
+        self.assertEqual(r.json()["error"], "invalid_grant")
+
+    def test_reusing_a_rotated_refresh_token_kills_the_family(self):
+        tokens = self.dance()
+        fresh = self.c.post("/oauth/token", data={"grant_type": "refresh_token",
+                                                  "refresh_token": tokens["refresh_token"],
+                                                  "client_id": tokens["client_id"]}).json()
+        # presenting the rotated-away token is treated as a leak
+        r = self.c.post("/oauth/token", data={"grant_type": "refresh_token",
+                                              "refresh_token": tokens["refresh_token"],
+                                              "client_id": tokens["client_id"]})
+        self.assertEqual(r.json()["error"], "invalid_grant")
+        # …and it takes the rest of the family with it
+        r = self.c.post("/oauth/token", data={"grant_type": "refresh_token",
+                                              "refresh_token": fresh["refresh_token"],
+                                              "client_id": tokens["client_id"]})
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.json()["error"], "invalid_grant")
+
+    # ---- the bearer check ----
+    def test_owner_for_bearer_accepts_only_a_live_owner_access_token(self):
+        from app import oauth
+        from app.auth import token_hash
+        from app.db import connect, now_iso
+        tokens = self.dance()
+        conn = connect()
+        try:
+            row = oauth.owner_for_bearer(conn, "Bearer " + tokens["access_token"])
+            self.assertIsNotNone(row)
+            self.assertEqual(row["username"], "owen")
+            self.assertEqual(row["role"], "owner")
+            self.assertIsNotNone(conn.execute("SELECT last_used_at FROM oauth_tokens WHERE token_hash = ?",
+                                              (token_hash(tokens["access_token"]),)).fetchone()["last_used_at"])
+            self.assertIsNotNone(oauth.owner_for_bearer(conn, "bearer " + tokens["access_token"]))  # case-insensitive
+            self.assertIsNone(oauth.owner_for_bearer(conn, tokens["access_token"]))                 # no scheme
+            self.assertIsNone(oauth.owner_for_bearer(conn, "Bearer "))
+            self.assertIsNone(oauth.owner_for_bearer(conn, None))
+            self.assertIsNone(oauth.owner_for_bearer(conn, "Bearer nonsense"))
+            self.assertIsNone(oauth.owner_for_bearer(conn, "Bearer " + tokens["refresh_token"]))    # wrong kind
+            for name, username, expires_in in (("expired", "owen", -10), ("staff-owned", "maria", 3600)):
+                with self.subTest(token=name):
+                    conn.execute(
+                        "INSERT INTO oauth_tokens (token_hash, kind, client_id, user_id, family, scope, "
+                        "expires_at, created_at) VALUES (?, 'access', ?, "
+                        "(SELECT id FROM users WHERE username = ?), ?, 'menus', ?, ?)",
+                        (token_hash(name), tokens["client_id"], username, f"fam-{name}",
+                         int(time.time()) + expires_in, now_iso()))
+                    self.assertIsNone(oauth.owner_for_bearer(conn, "Bearer " + name))
+        finally:
+            conn.close()
+
+    def test_the_unauthorized_response_carries_the_resource_metadata(self):
+        from app import oauth
+        r = oauth.unauthorized(False)
+        self.assertEqual(r.status_code, 401)
+        self.assertEqual(r.headers["www-authenticate"],
+                         'Bearer resource_metadata="http://testserver/.well-known/oauth-protected-resource", '
+                         'scope="menus"')
+        self.assertEqual(json.loads(r.body), {"error": "unauthorized"})
+        r = oauth.unauthorized(True)
+        self.assertEqual(r.headers["www-authenticate"],
+                         'Bearer error="invalid_token", '
+                         'resource_metadata="http://testserver/.well-known/oauth-protected-resource", '
+                         'scope="menus"')
+        self.assertEqual(json.loads(r.body), {"error": "invalid_token"})
 
 
 if __name__ == "__main__":
