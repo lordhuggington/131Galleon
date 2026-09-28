@@ -6,6 +6,7 @@ import io
 import os
 import tempfile
 import unittest
+import urllib.parse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -55,6 +56,18 @@ class OAuthTest(unittest.TestCase):
         r = self.c.post("/oauth/register", json={"client_name": name, "redirect_uris": uris or [CB]})
         self.assertEqual(r.status_code, 201, r.text)
         return r.json()["client_id"]
+
+    def params(self, client_id: str, **overrides) -> dict:
+        """A valid authorize query. The challenge is RFC 7636's example; Task 7 uses a real verifier."""
+        p = {"response_type": "code", "client_id": client_id, "redirect_uri": CB,
+             "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+             "code_challenge_method": "S256", "state": "xyz123", "scope": "menus"}
+        p.update(overrides)
+        return p
+
+    def query_of(self, response) -> dict[str, list[str]]:
+        self.assertEqual(response.status_code, 302, response.text)
+        return urllib.parse.parse_qs(urllib.parse.urlsplit(response.headers["location"]).query)
 
     # ---- metadata ----
     def test_protected_resource_metadata(self):
@@ -122,6 +135,117 @@ class OAuthTest(unittest.TestCase):
                 r = self.c.post("/oauth/register", json=body)
                 self.assertEqual(r.status_code, 400, r.text)
                 self.assertEqual(r.json()["error"], "invalid_client_metadata")
+
+    # ---- the consent page ----
+    def test_an_owner_sees_the_consent_page(self):
+        client_id = self.register()
+        self.login("owen")
+        r = self.c.get("/oauth/authorize", params=self.params(client_id))
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertIn("form-action 'self' https://claude.ai", r.headers["content-security-policy"])
+        self.assertEqual(r.headers["cache-control"], "no-store")
+        self.assertIn("Claude wants to read and write Galleon menus", r.text)
+        self.assertIn(">Allow</button>", r.text)
+        self.assertIn(">Deny</button>", r.text)
+        self.assertIn('<script src="/oauth.js" defer></script>', r.text)
+        self.assertIn(f'name="client_id" value="{client_id}"', r.text)
+        self.assertIn('name="state" value="xyz123"', r.text)
+        self.assertIn("Owen", r.text)
+
+    def test_no_cookie_shows_the_sign_in_form(self):
+        client_id = self.register()
+        r = self.c.get("/oauth/authorize", params=self.params(client_id))
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertIn('id="phone"', r.text)
+        self.assertIn("Text me a code", r.text)
+        self.assertIn("Owner? Sign in with a password", r.text)
+        self.assertIn('src="/oauth.js"', r.text)
+        self.assertNotIn(">Allow</button>", r.text)
+
+    def test_staff_are_refused(self):
+        client_id = self.register()
+        self.login("maria")
+        r = self.c.get("/oauth/authorize", params=self.params(client_id))
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertIn("Only an owner can connect Claude.", r.text)
+        self.assertNotIn(">Allow</button>", r.text)
+        self.assertIn('id="signOut"', r.text)
+
+    def test_the_consent_page_escapes_everything_it_echoes(self):
+        client_id = self.register(name="<script>alert(1)</script>")
+        self.login("owen")
+        r = self.c.get("/oauth/authorize", params=self.params(client_id, state='"><b>x'))
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertNotIn("<script>alert(1)</script>", r.text)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", r.text)
+        self.assertNotIn('"><b>x', r.text)
+        self.assertIn("&quot;&gt;&lt;b&gt;x", r.text)
+
+    def test_an_unknown_client_gets_an_error_page_and_no_redirect(self):
+        self.login("owen")
+        r = self.c.get("/oauth/authorize", params=self.params("not-a-client"), follow_redirects=False)
+        self.assertEqual(r.status_code, 400, r.text)
+        self.assertNotIn("location", r.headers)
+        self.assertIn("the app asking isn't registered here", r.text)
+        # a redirect_uri the client never registered is the same class of failure
+        client_id = self.register()
+        r = self.c.get("/oauth/authorize",
+                       params=self.params(client_id, redirect_uri="https://evil.example/cb"),
+                       follow_redirects=False)
+        self.assertEqual(r.status_code, 400, r.text)
+        self.assertNotIn("location", r.headers)
+
+    def test_a_bad_parameter_redirects_with_an_error(self):
+        client_id = self.register()
+        self.login("owen")
+        cases = [({"response_type": "token"}, "unsupported_response_type"),
+                 ({"code_challenge": ""}, "invalid_request"),
+                 ({"code_challenge_method": "plain"}, "invalid_request"),
+                 ({"scope": "menus admin"}, "invalid_scope")]
+        for overrides, expected in cases:
+            with self.subTest(expected=expected):
+                q = self.query_of(self.c.get("/oauth/authorize", params=self.params(client_id, **overrides),
+                                             follow_redirects=False))
+                self.assertEqual(q["error"], [expected])
+                self.assertEqual(q["state"], ["xyz123"])
+
+    def test_allow_issues_a_code_and_deny_does_not(self):
+        client_id = self.register()
+        self.login("owen")
+        p = self.params(client_id)
+        q = self.query_of(self.c.post("/oauth/authorize", data={**p, "decision": "allow"},
+                                      follow_redirects=False))
+        self.assertTrue(q["code"][0])
+        self.assertEqual(q["state"], ["xyz123"])
+        q = self.query_of(self.c.post("/oauth/authorize", data={**p, "decision": "deny"},
+                                      follow_redirects=False))
+        self.assertEqual(q["error"], ["access_denied"])
+        self.assertEqual(q["state"], ["xyz123"])
+        self.assertNotIn("code", q)
+
+    def test_post_authorize_needs_an_owner_session(self):
+        client_id = self.register()
+        p = {**self.params(client_id), "decision": "allow"}
+        r = self.c.post("/oauth/authorize", data=p, follow_redirects=False)
+        self.assertEqual(r.status_code, 403, r.text)
+        self.assertIn("Please sign in as an owner first.", r.text)
+        self.login("maria")
+        r = self.c.post("/oauth/authorize", data=p, follow_redirects=False)
+        self.assertEqual(r.status_code, 403, r.text)
+        self.assertIn("Only an owner can connect Claude.", r.text)
+
+    def test_post_authorize_checks_sec_fetch_site(self):
+        client_id = self.register()
+        self.login("owen")
+        p = {**self.params(client_id), "decision": "allow"}
+        r = self.c.post("/oauth/authorize", data=p, headers={"sec-fetch-site": "cross-site"},
+                        follow_redirects=False)
+        self.assertEqual(r.status_code, 403, r.text)
+        self.assertIn("That request didn't come from this page.", r.text)
+        # the browser's own value for a form on this page is allowed
+        r = self.c.post("/oauth/authorize", data=p, headers={"sec-fetch-site": "same-origin"},
+                        follow_redirects=False)
+        self.assertEqual(r.status_code, 302, r.text)
 
 
 if __name__ == "__main__":
