@@ -46,14 +46,18 @@ class BodyTooLarge(Exception):
 
 async def read_body(request: Request, max_bytes: int) -> bytes:
     """The raw body, refused before it is read when Content-Length says it is over max_bytes, and
-    after when it lies."""
+    mid-stream when it lies — so a hostile client cannot make a worker buffer more than the cap."""
     declared = request.headers.get("content-length", "")
-    if declared.isdigit() and int(declared) > max_bytes:
+    if declared.isascii() and declared.isdigit() and int(declared) > max_bytes:
         raise BodyTooLarge()
-    raw = await request.body()
-    if len(raw) > max_bytes:
-        raise BodyTooLarge()
-    return raw
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > max_bytes:
+            raise BodyTooLarge()  # stop reading; don't keep the rest
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 async def form_body(request: Request) -> dict[str, str]:

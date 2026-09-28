@@ -10,7 +10,7 @@ from starlette.applications import Starlette
 from starlette.routing import Mount
 from starlette.staticfiles import StaticFiles
 
-from . import api, oauth
+from . import api, mcp, oauth
 from .config import get_config
 from .db import connect, migrate
 
@@ -84,7 +84,7 @@ async def lifespan(app):
 
 def create_app() -> Starlette:
     STATIC_DIR.mkdir(parents=True, exist_ok=True)  # the frontend build writes here; run without it in dev
-    app = Starlette(routes=[*api.routes, *oauth.routes,
+    app = Starlette(routes=[*api.routes, *oauth.routes, *mcp.routes,
                             Mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")],
                     lifespan=lifespan)
     return SecurityHeaders(app)
