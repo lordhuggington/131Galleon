@@ -1,6 +1,7 @@
 """Migration runner and schema migration tests. Run with:  python3 -m unittest discover -s tests"""
 from __future__ import annotations
 
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -13,6 +14,23 @@ def apply_001(conn) -> None:
     from app.db import MIGRATIONS_DIR
     sql = (MIGRATIONS_DIR / "001_initial.sql").read_text()
     conn.executescript(f"BEGIN;\n{sql}\nPRAGMA user_version = 1;\nCOMMIT;")
+
+
+def apply_up_to(conn, last: int) -> None:
+    """Apply migrations 001..last and stop, so a test can write pre-migration rows.
+
+    Foreign keys go off the way app.db.migrate does it: 002 rebuilds users with a DROP + RENAME.
+    """
+    from app.db import MIGRATIONS_DIR
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        for f in sorted(MIGRATIONS_DIR.glob("[0-9][0-9][0-9]_*.sql")):
+            num = int(f.name[:3])
+            if num > last:
+                break
+            conn.executescript(f"BEGIN;\n{f.read_text()}\nPRAGMA user_version = {num};\nCOMMIT;")
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
 
 
 class MigrationTest(unittest.TestCase):
@@ -82,6 +100,64 @@ class MigrationTest(unittest.TestCase):
             row = conn.execute("SELECT * FROM shopping_items WHERE week = '2026-09-28' AND id = 's01'").fetchone()
             self.assertEqual(row["item"], "Oats")
             self.assertEqual(row["search"], "")  # rows written before the column still read cleanly
+            self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
+        finally:
+            conn.close()
+
+    def test_004_moves_leftovers_onto_the_session_that_made_them(self):
+        from app.db import connect, migrate
+        conn = connect(self.path)
+        try:
+            apply_up_to(conn, 3)
+            both = {"sessions": {"tue": {"date": "2026-09-29", "recipes": {}},
+                                 "fri": {"date": "2026-10-02", "recipes": {}}},
+                    "leftovers": ["About 170 g Greek yogurt", "2 eggs"]}
+            tue_only = {"sessions": {"tue": {"date": "2026-10-06", "recipes": {}}},
+                        "leftovers": ["About 80 g Parmesan"]}
+            fri_only = {"sessions": {"fri": {"date": "2026-10-16", "recipes": {}}}}
+            for week, data in (("2026-09-28", both), ("2026-10-05", tue_only), ("2026-10-12", fri_only)):
+                conn.execute("INSERT INTO meal_plans (week, data, created_at) VALUES (?, ?, 'x')",
+                             (week, json.dumps(data)))
+
+            self.assertGreaterEqual(migrate(conn), 4)
+
+            rows = {r["week"]: json.loads(r["data"]) for r in conn.execute("SELECT week, data FROM meal_plans")}
+            # Friday is the week's last cook, so a week with both sessions hands its leftovers to Friday.
+            self.assertEqual(rows["2026-09-28"]["sessions"]["fri"]["leftovers"],
+                             ["About 170 g Greek yogurt", "2 eggs"])
+            self.assertEqual(rows["2026-09-28"]["sessions"]["tue"]["leftovers"], [])
+            self.assertEqual(rows["2026-10-05"]["sessions"]["tue"]["leftovers"], ["About 80 g Parmesan"])
+            self.assertEqual(rows["2026-10-12"]["sessions"]["fri"]["leftovers"], [])
+            for week, data in rows.items():
+                self.assertNotIn("leftovers", data, week)  # the week-level list is gone
+                for name, sess in data["sessions"].items():
+                    self.assertIsInstance(sess["leftovers"], list, f"{week} {name}")
+            self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
+        finally:
+            conn.close()
+
+    def test_004_drops_ai_jobs_and_adds_the_oauth_tables(self):
+        from app.db import connect, migrate
+        conn = connect(self.path)
+        try:
+            apply_up_to(conn, 3)
+            conn.execute("INSERT INTO meal_plans (week, data, created_at) VALUES (?, ?, 'x')",
+                         ("2026-09-28", '{"sessions": {}}'))
+            conn.execute("INSERT INTO shopping_items (week, id, item, buy, for_session) "
+                         "VALUES ('2026-09-28', 's01', 'Oats', '1 bag', 'both')")
+            conn.execute("INSERT INTO ai_jobs (week, status, created_at) VALUES ('2026-09-28', 'done', 'x')")
+
+            self.assertGreaterEqual(migrate(conn), 4)
+
+            names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master")}
+            self.assertNotIn("ai_jobs", names)
+            for table in ("oauth_clients", "oauth_codes", "oauth_tokens"):
+                self.assertIn(table, names)
+            for index in ("ix_oauth_tokens_family", "ix_oauth_tokens_user"):
+                self.assertIn(index, names)
+            # A pre-004 row with for_session = 'both' is still legal and still readable.
+            row = conn.execute("SELECT * FROM shopping_items WHERE week = '2026-09-28' AND id = 's01'").fetchone()
+            self.assertEqual(row["for_session"], "both")
             self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
         finally:
             conn.close()

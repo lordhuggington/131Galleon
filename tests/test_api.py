@@ -333,6 +333,13 @@ class ApiTest(unittest.TestCase):
         self.assertTrue(plan["sessions"]["tue"]["recipes"]["main"]["fav"])
         self.assertEqual(self.c.get("/api/plans/2026-09-29").status_code, 400)  # not a Monday
 
+    def test_the_seed_puts_its_leftovers_on_the_friday_session(self):
+        self.login("owen")
+        plan = self.c.get("/api/plans/2026-09-28").json()["plan"]
+        self.assertNotIn("leftovers", plan)  # never at the top of a plan any more
+        self.assertEqual(plan["sessions"]["tue"]["leftovers"], [])
+        self.assertIn("About 170 g Greek yogurt", plan["sessions"]["fri"]["leftovers"])
+
     def test_shopping_search_phrase_survives_a_round_trip(self):
         from app import store
         from app.db import connect, tx
