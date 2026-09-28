@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import logging
 import os
 import tempfile
 import unittest
@@ -792,6 +793,31 @@ class ApiTest(unittest.TestCase):
         self.assertFalse(path.is_file())
         self.assertEqual(self.c.delete(f"/api/visits/2026-09-29/photos/{mine['id']}", headers=H).status_code, 404)
         self.assertEqual(self.c.get("/api/state").json()["visits"].get("2026-09-29", {}).get("photos", []), [])
+
+    # ---- startup ----
+
+    def test_startup_logs_the_schema_version_through_uvicorns_handler(self):
+        """uvicorn hands "house_run_sheet" no handler, so lifespan has to borrow one or every info line is lost."""
+        from starlette.testclient import TestClient
+        from app.main import create_app
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        uvicorn_log = logging.getLogger("uvicorn")  # where uvicorn hangs its stderr handler
+        app_log = logging.getLogger("house_run_sheet")
+        kept_handlers, kept_level = app_log.handlers[:], app_log.level
+        uvicorn_log.addHandler(handler)
+        try:
+            with TestClient(create_app()):
+                pass
+        finally:
+            uvicorn_log.removeHandler(handler)
+            app_log.handlers[:] = kept_handlers  # a leaked handler would print over the whole suite
+            app_log.level = kept_level
+        self.assertIn("database ready at schema version 4", stream.getvalue())
+
+    def test_nothing_is_borrowed_when_uvicorn_has_configured_no_logging(self):
+        """setUp already started the app under the test client; the suite has to stay as quiet as it was."""
+        self.assertEqual(logging.getLogger("house_run_sheet").handlers, [])
 
 
 if __name__ == "__main__":

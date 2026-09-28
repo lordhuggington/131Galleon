@@ -65,8 +65,32 @@ class SecurityHeaders:
         await self.app(scope, receive, send_wrapper)
 
 
+def log_through_uvicorn() -> None:
+    """Send our records to the stderr handler uvicorn already installed.
+
+    uvicorn configures only its own loggers, so "house_run_sheet" reaches no handler at all: every
+    log.info() is dropped — the schema version, a registered client, an issued code, a saved
+    session — and WARNING+ escapes raw through logging.lastResort. Borrowing uvicorn's handler puts
+    the lot on one stream in uvicorn's own format. Only this logger, not the root: root at INFO
+    would also unmute httpx, which logs the URL of every Twilio call.
+
+    Under the test client uvicorn has configured nothing, so this does nothing and the suite
+    stays quiet.
+    """
+    if log.handlers:
+        return
+    # 0.46 hangs the handler on "uvicorn"; "uvicorn.error" inherits it by propagation.
+    handlers = logging.getLogger("uvicorn").handlers or logging.getLogger("uvicorn.error").handlers
+    if not handlers:
+        return
+    for handler in handlers:
+        log.addHandler(handler)
+    log.setLevel(logging.INFO)  # NOTSET would inherit root's WARNING and drop every info line
+
+
 @contextlib.asynccontextmanager
 async def lifespan(app):
+    log_through_uvicorn()
     cfg = get_config()
     Path(cfg.photos_dir).mkdir(parents=True, exist_ok=True)
     if not os.environ.get("HRS_PUBLIC_URL"):
