@@ -64,7 +64,8 @@ def endpoint(role: str | None = None, public: bool = False, raw_body: bool = Fal
             body: Any = b"" if raw_body else {}
             if raw_body and max_bytes is not None:
                 declared = request.headers.get("content-length", "")
-                if declared.isdigit() and int(declared) > max_bytes:
+                # isascii() as well as isdigit(): "²".isdigit() is True, and int("²") raises.
+                if declared.isascii() and declared.isdigit() and int(declared) > max_bytes:
                     return err(413, "That photo is too large.")
                 chunks: list[bytes] = []
                 total = 0

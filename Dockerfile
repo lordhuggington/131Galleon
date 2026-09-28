@@ -28,5 +28,5 @@ USER hrs
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')"
 
-# One worker on purpose: SQLite, the login throttle and menu jobs all live in this process.
+# One worker on purpose: SQLite and the login throttle live in this process.
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]

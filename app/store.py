@@ -167,7 +167,10 @@ def get_plan(conn: sqlite3.Connection, week: str, include_shopping: bool) -> dic
     plan = {"week": week, "source": row["source"], "note": row["note"], "createdAt": row["created_at"],
             "sessions": sessions}
     if include_shopping:
-        items = conn.execute("SELECT * FROM shopping_items WHERE week = ? ORDER BY sort_order", (week,)).fetchall()
+        # sort_order is per session, so a week with both sessions saved has two rows for every position:
+        # id breaks the tie, or the list would shuffle between reads.
+        items = conn.execute("SELECT * FROM shopping_items WHERE week = ? ORDER BY sort_order, id",
+                             (week,)).fetchall()
         plan["shopping"] = [{"id": r["id"], "item": r["item"], "buy": r["buy"], "aisle": r["aisle"],
                              "for": r["for_session"], "stock": bool(r["stock"]), "search": r["search"]}
                             for r in items]

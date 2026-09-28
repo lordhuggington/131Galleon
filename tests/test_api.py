@@ -735,6 +735,39 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(r.status_code, 413)
         self.assertEqual(r.json()["error"], "That photo is too large.")
 
+    def test_a_non_ascii_content_length_is_not_a_500(self):
+        """"²".isdigit() is True but int("²") raises, so the pre-check needs isascii() too.
+
+        The header is sent at ASGI level, not through the test client: httpx re-encodes a latin-1 header
+        value as UTF-8, which arrives as "Â²" and is not a digit at all.
+        """
+        import asyncio
+        import json
+
+        from starlette.requests import Request
+        from app import api
+        route = next(r for r in api.routes
+                     if r.path == "/api/visits/{date}/photos" and "POST" in r.methods)
+
+        async def receive():
+            return {"type": "http.request", "body": JPEG, "more_body": False}
+
+        def post(declared: bytes):
+            scope = {"type": "http", "http_version": "1.1", "method": "POST", "scheme": "http",
+                     "path": "/api/visits/2026-09-29/photos", "root_path": "", "query_string": b"kind=done",
+                     "headers": [(b"host", b"testserver"), (b"x-hrs", b"1"),
+                                 (b"content-type", b"image/jpeg"), (b"content-length", declared)],
+                     "server": ("testserver", 80), "client": ("testclient", 50000),
+                     "path_params": {"date": "2026-09-29"}}
+            return asyncio.run(route.endpoint(Request(scope, receive)))
+
+        r = post(b"\xb2")  # "²": past the size gate without raising, then refused for having no session
+        self.assertEqual(r.status_code, 401)
+        self.assertEqual(json.loads(r.body), {"error": "Please sign in."})
+        r = post(b"99999999")  # an honest, ASCII, oversized length is still refused unread
+        self.assertEqual(r.status_code, 413)
+        self.assertEqual(json.loads(r.body), {"error": "That photo is too large."})
+
     def test_photos_require_a_session(self):
         self.assertEqual(self.c.get("/photos/" + "a" * 32 + ".jpg").status_code, 401)
         r = self.c.post("/api/visits/2026-09-29/photos?kind=done", content=JPEG, headers=PHOTO_HEADERS)

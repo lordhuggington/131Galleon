@@ -36,7 +36,10 @@ OAUTH_CSP = ("default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-in
 
 
 class SecurityHeaders:
-    """Pure ASGI middleware adding security headers and no-store on API responses."""
+    """Pure ASGI middleware. Every response gets nosniff, a same-origin referrer policy, DENY framing
+    and a Content-Security-Policy — OAUTH_CSP under /oauth/, where the consent form posts on to
+    claude.ai, and CSP everywhere else. Anything under NO_STORE_PREFIXES also gets no-store, so the
+    API, the OAuth endpoints, the metadata documents and /mcp are never held by a proxy."""
 
     def __init__(self, app):
         self.app = app
