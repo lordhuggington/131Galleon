@@ -100,6 +100,10 @@ def _client_uris(client: sqlite3.Row) -> list[str]:
     try:
         uris = json.loads(client["redirect_uris"])
     except ValueError:
+        uris = None
+    if not isinstance(uris, list):
+        # A stored scalar would otherwise be iterated one character at a time, and every character
+        # would count as a registered redirect URI.
         log.warning("OAuth client %s has unreadable redirect_uris", client["client_id"])
         return []
     return [u for u in uris if isinstance(u, str)]
@@ -129,16 +133,57 @@ async def authorization_server_metadata(request: Request) -> Response:
 
 
 # ---------- dynamic client registration (RFC 7591) ----------
+MAX_REDIRECT_URIS = 8
+MAX_REDIRECT_URI_LEN = 512
+# Control characters out of anything that reaches a log line: a client_name is whatever the client sent,
+# and a newline in it would forge a second log line.
+_LOG_STRIP = {c: None for c in [*range(0x20), 0x7f]}
+
+
+def _log_safe(text: str) -> str:
+    return text.translate(_LOG_STRIP)
+
+
 def _redirect_allowed(uri: str) -> bool:
     """Claude's hosted callback, or a loopback callback for Claude Code (any port, any path)."""
     if uri == CLAUDE_REDIRECT:
         return True
+    if any(c in uri for c in "\r\n\t"):
+        # urlsplit drops these silently, so the URI it parses is not the one we would redirect to.
+        return False
     try:
         p = urllib.parse.urlsplit(uri)
+        _ = p.port  # a port outside 0-65535 raises here: a refusal, not a 500 further down
     except ValueError:
         return False
     return (p.scheme == "http" and p.hostname in ("localhost", "127.0.0.1")
             and not p.query and not p.fragment)
+
+
+def _redirect_matches(registered: list[str], presented: str) -> bool:
+    """Is `presented` one of this client's redirect URIs? Loopback is matched with the port ignored.
+
+    Claude Code registers one loopback port and then listens on whatever port is free when the browser
+    opens (spec §3), so http://127.0.0.1:53127/callback has to match http://127.0.0.1:61990/callback.
+    Everything else is an exact string match, and localhost is not interchangeable with 127.0.0.1.
+    """
+    if presented in registered:
+        return True
+    try:
+        p = urllib.parse.urlsplit(presented)
+    except ValueError:
+        return False
+    if not (p.scheme == "http" and p.hostname in ("localhost", "127.0.0.1")
+            and not p.query and not p.fragment):
+        return False
+    for uri in registered:
+        try:
+            r = urllib.parse.urlsplit(uri)
+        except ValueError:
+            continue
+        if (r.scheme, r.hostname, r.path) == (p.scheme, p.hostname, p.path):
+            return True
+    return False
 
 
 async def register(request: Request) -> Response:
@@ -155,6 +200,11 @@ async def register(request: Request) -> Response:
     uris = body.get("redirect_uris")
     if not isinstance(uris, list) or not uris or not all(isinstance(u, str) and u for u in uris):
         return oauth_error("invalid_client_metadata", "redirect_uris must be a non-empty array of strings.")
+    if len(uris) > MAX_REDIRECT_URIS:
+        return oauth_error("invalid_client_metadata", "redirect_uris may list at most 8 URIs.")
+    if any(len(u) > MAX_REDIRECT_URI_LEN for u in uris):
+        # Not echoed back: a 512-character URI in an error body is a reflection surface of its own.
+        return oauth_error("invalid_redirect_uri", "A redirect URI may be at most 512 characters.")
     for uri in uris:
         if not _redirect_allowed(uri):
             return oauth_error("invalid_redirect_uri", f"{uri} is not a redirect URI this server accepts.")
@@ -169,15 +219,20 @@ async def register(request: Request) -> Response:
         try:
             client_id = secrets.token_urlsafe(24)  # an identifier, not a credential: stored in the clear
             with tx(conn):
-                if conn.execute("SELECT COUNT(*) FROM oauth_clients").fetchone()[0] > MAX_CLIENTS:
+                if conn.execute("SELECT COUNT(*) FROM oauth_clients").fetchone()[0] >= MAX_CLIENTS:
                     # Re-adding the connector registers again, so old unused rows accumulate. Anything
                     # a month old with no tokens behind it is dead weight.
                     conn.execute("DELETE FROM oauth_clients WHERE created_at < ? "
                                  "AND client_id NOT IN (SELECT client_id FROM oauth_tokens)",
                                  (_iso_ago(30 * 86400),))
+                    if conn.execute("SELECT COUNT(*) FROM oauth_clients").fetchone()[0] >= MAX_CLIENTS:
+                        # The sweep freed nothing, so the table stays at the cap rather than growing.
+                        log.warning("refused an OAuth client registration: the table is at its cap")
+                        return oauth_error("invalid_client_metadata",
+                                           "This server is not accepting new client registrations right now.")
                 conn.execute("INSERT INTO oauth_clients (client_id, client_name, redirect_uris, created_at) "
                              "VALUES (?, ?, ?, ?)", (client_id, name, json.dumps(uris), now_iso()))
-            log.info("registered OAuth client %s (%s)", client_id, name or "unnamed")
+            log.info("registered OAuth client %s (%s)", client_id, _log_safe(name) or "unnamed")
             return JSONResponse({"client_id": client_id, "client_id_issued_at": issued, "client_name": name,
                                  "redirect_uris": uris, "token_endpoint_auth_method": "none",
                                  "grant_types": ["authorization_code", "refresh_token"],
@@ -325,7 +380,7 @@ async def authorize_get(request: Request) -> Response:
             # redirected to — that is how an open redirector is built. Everything else goes back to
             # the client as an error parameter.
             client = _client(conn, q["client_id"])
-            if client is None or q["redirect_uri"] not in _client_uris(client):
+            if client is None or not _redirect_matches(_client_uris(client), q["redirect_uri"]):
                 return error_page(BAD_CLIENT, 400)
             if q["response_type"] != "code":
                 return _redirect_error(q["redirect_uri"], "unsupported_response_type", q["state"])
@@ -368,7 +423,7 @@ async def authorize_post(request: Request) -> Response:
                 return error_page("Only an owner can connect Claude.", 403)
             client = _client(conn, form.get("client_id", ""))
             redirect_uri = form.get("redirect_uri", "")
-            if client is None or redirect_uri not in _client_uris(client):
+            if client is None or not _redirect_matches(_client_uris(client), redirect_uri):
                 return error_page(BAD_CLIENT, 400)
             state = form.get("state", "")
             if form.get("decision") != "allow":
@@ -503,8 +558,8 @@ def owner_for_bearer(conn: sqlite3.Connection, header: str | None) -> sqlite3.Ro
     if scheme.lower() != "bearer" or not token:
         return None
     row = conn.execute(
-        """SELECT t.token_hash, t.last_used_at, u.id, u.username, u.display_name, u.role, u.label,
-                  u.phone, u.door_code, u.can_see_meals
+        """SELECT t.token_hash, t.last_used_at, t.family, u.id, u.username, u.display_name, u.role,
+                  u.label, u.phone, u.door_code, u.can_see_meals
              FROM oauth_tokens t JOIN users u ON u.id = t.user_id
             WHERE t.token_hash = ? AND t.kind = 'access' AND t.expires_at > ?
               AND t.revoked_at IS NULL AND u.active = 1 AND u.role = 'owner'""",
@@ -514,8 +569,12 @@ def owner_for_bearer(conn: sqlite3.Connection, header: str | None) -> sqlite3.Ro
     # A chatty client would otherwise write on every call; a minute's resolution is plenty for the
     # "last used" line in Setup → Claude.
     if not row["last_used_at"] or row["last_used_at"] < _iso_ago(60):
-        conn.execute("UPDATE oauth_tokens SET last_used_at = ? WHERE token_hash = ?",
-                     (now_iso(), row["token_hash"]))
+        try:
+            conn.execute("UPDATE oauth_tokens SET last_used_at = ? WHERE token_hash = ?",
+                         (now_iso(), row["token_hash"]))
+        except sqlite3.Error as e:
+            # Best effort only: a locked database must not turn a valid bearer into a 500.
+            log.warning("could not stamp last_used_at on OAuth token family %s: %s", row["family"], e)
     return row
 
 

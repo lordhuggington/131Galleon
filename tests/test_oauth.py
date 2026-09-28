@@ -165,6 +165,115 @@ class OAuthTest(unittest.TestCase):
                 self.assertEqual(r.status_code, 400, r.text)
                 self.assertEqual(r.json()["error"], "invalid_client_metadata")
 
+    def test_register_refuses_a_redirect_uri_that_cannot_be_parsed_safely(self):
+        """A header-splitting URI and a port outside 0-65535 are refusals, not a 500."""
+        for uri in ("http://localhost:1234/cb\r\nX-Injected: 1", "http://localhost:1234/cb\nX-Injected: 1",
+                    "http://localhost:1234/cb\tx", "http://localhost:99999999/cb",
+                    "http://127.0.0.1:99999999/cb"):
+            with self.subTest(uri=uri):
+                r = self.c.post("/oauth/register", json={"client_name": "X", "redirect_uris": [uri]})
+                self.assertEqual(r.status_code, 400, r.text)
+                self.assertEqual(r.json()["error"], "invalid_redirect_uri")
+
+    def test_register_keeps_control_characters_out_of_the_log(self):
+        """client_name comes from the client: a newline in it must not forge a second log line."""
+        from app.db import connect
+        name = "Claude\r\nregistered OAuth client forged"
+        with self.assertLogs("house_run_sheet", "INFO") as cm:
+            r = self.c.post("/oauth/register", json={"client_name": name, "redirect_uris": [CB]})
+        self.assertEqual(r.status_code, 201, r.text)
+        self.assertEqual(len(cm.output), 1)
+        self.assertNotIn("\n", cm.output[0])
+        self.assertNotIn("\r", cm.output[0])
+        self.assertIn("Clauderegistered OAuth client forged", cm.output[0])
+        # storage is untouched: the name is echoed back and stored exactly as it was sent
+        self.assertEqual(r.json()["client_name"], name)
+        conn = connect()
+        try:
+            stored = conn.execute("SELECT client_name FROM oauth_clients WHERE client_id = ?",
+                                  (r.json()["client_id"],)).fetchone()["client_name"]
+        finally:
+            conn.close()
+        self.assertEqual(stored, name)
+
+    def test_register_caps_the_redirect_uri_list(self):
+        many = [f"http://127.0.0.1:{5000 + n}/callback" for n in range(9)]
+        r = self.c.post("/oauth/register", json={"client_name": "X", "redirect_uris": many})
+        self.assertEqual(r.status_code, 400, r.text)
+        self.assertEqual(r.json()["error"], "invalid_client_metadata")
+        self.assertEqual(r.json()["error_description"], "redirect_uris may list at most 8 URIs.")
+        self.assertTrue(self.register(many[:8]))  # eight is still fine
+        long_uri = "http://127.0.0.1:5000/" + "c" * (513 - len("http://127.0.0.1:5000/"))
+        self.assertEqual(len(long_uri), 513)
+        r = self.c.post("/oauth/register", json={"client_name": "X", "redirect_uris": [long_uri]})
+        self.assertEqual(r.status_code, 400, r.text)
+        self.assertEqual(r.json()["error"], "invalid_redirect_uri")
+        self.assertEqual(r.json()["error_description"], "A redirect URI may be at most 512 characters.")
+        self.assertNotIn("ccc", r.json()["error_description"])  # the URI itself is not echoed back
+
+    def test_register_refuses_to_pass_the_client_cap(self):
+        from app import oauth
+        from app.db import connect, now_iso
+        from app.oauth import MAX_CLIENTS
+
+        def count() -> int:
+            conn = connect()
+            try:
+                return conn.execute("SELECT COUNT(*) FROM oauth_clients").fetchone()[0]
+            finally:
+                conn.close()
+
+        conn = connect()
+        try:
+            for n in range(MAX_CLIENTS):
+                conn.execute("INSERT INTO oauth_clients (client_id, client_name, redirect_uris, created_at) "
+                             "VALUES (?, '', '[]', ?)", (f"filler-{n}", now_iso()))
+        finally:
+            conn.close()
+        self.assertEqual(count(), MAX_CLIENTS)
+        with self.assertLogs("house_run_sheet", "WARNING") as cm:
+            r = self.c.post("/oauth/register", json={"client_name": "Claude", "redirect_uris": [CB]})
+        self.assertEqual(r.status_code, 400, r.text)
+        self.assertEqual(r.json()["error"], "invalid_client_metadata")
+        self.assertEqual(r.json()["error_description"],
+                         "This server is not accepting new client registrations right now.")
+        self.assertTrue(any("registration" in line for line in cm.output))
+        self.assertEqual(count(), MAX_CLIENTS)  # nothing was inserted past the cap
+        # one row old enough to sweep makes room for exactly one more registration
+        conn = connect()
+        try:
+            conn.execute("UPDATE oauth_clients SET created_at = ? WHERE client_id = 'filler-0'",
+                         (oauth._iso_ago(31 * 86400),))
+        finally:
+            conn.close()
+        self.assertTrue(self.register())
+        self.assertEqual(count(), MAX_CLIENTS)
+
+    def test_register_refusals_say_why(self):
+        r = self.c.post("/oauth/register", content=b"x" * (64 * 1024 + 1),
+                        headers={"content-type": "application/json"})
+        self.assertEqual(r.status_code, 400, r.text)
+        self.assertEqual(r.json(), {"error": "invalid_client_metadata",
+                                    "error_description": "That registration request is too large."})
+        for body in (b"{not json", b"[]", b'"a string"', b"7"):
+            with self.subTest(body=body):
+                r = self.c.post("/oauth/register", content=body,
+                                headers={"content-type": "application/json"})
+                self.assertEqual(r.status_code, 400, r.text)
+                self.assertEqual(r.json(), {"error": "invalid_client_metadata",
+                                            "error_description":
+                                                "The registration request must be a JSON object."})
+
+    def test_client_uris_survives_a_doctored_row(self):
+        """A JSON scalar in redirect_uris must not be iterated character by character."""
+        from app import oauth
+        for stored in ('"http://127.0.0.1:1/cb"', "7", "null", "{not json"):
+            with self.subTest(stored=stored):
+                with self.assertLogs("house_run_sheet", "WARNING") as cm:
+                    self.assertEqual(oauth._client_uris({"client_id": "c1", "redirect_uris": stored}), [])
+                self.assertIn("unreadable redirect_uris", cm.output[0])
+                self.assertIn("c1", cm.output[0])
+
     # ---- the consent page ----
     def test_an_owner_sees_the_consent_page(self):
         client_id = self.register()
@@ -224,6 +333,73 @@ class OAuthTest(unittest.TestCase):
         self.assertEqual(r.status_code, 400, r.text)
         self.assertNotIn("location", r.headers)
 
+    def test_a_loopback_redirect_matches_with_the_port_ignored(self):
+        """Claude Code registers one loopback port and listens on another (spec §3)."""
+        client_id = self.register(["http://127.0.0.1:53127/callback"])
+        self.login("owen")
+        presented = "http://127.0.0.1:61990/callback"
+        r = self.c.get("/oauth/authorize", params=self.params(client_id, redirect_uri=presented))
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertIn("Claude wants to read and write Galleon menus", r.text)
+        self.assertIn(f'name="redirect_uri" value="{presented}"', r.text)
+        verifier, challenge = self.pkce()
+        p = self.params(client_id, redirect_uri=presented, code_challenge=challenge)
+        r = self.c.post("/oauth/authorize", data={**p, "decision": "allow"}, follow_redirects=False)
+        self.assertEqual(r.status_code, 302, r.text)
+        self.assertTrue(r.headers["location"].startswith(presented + "?"), r.headers["location"])
+        code = urllib.parse.parse_qs(urllib.parse.urlsplit(r.headers["location"]).query)["code"][0]
+        self.assertTrue(code)
+        # the token request is bound to the URI the code was issued for, not the registered one
+        base = {"grant_type": "authorization_code", "code": code, "client_id": client_id,
+                "code_verifier": verifier}
+        r = self.c.post("/oauth/token", data={**base, "redirect_uri": "http://127.0.0.1:53127/callback"})
+        self.assertEqual(r.json()["error"], "invalid_grant", r.text)
+        r = self.c.post("/oauth/token", data={**base, "redirect_uri": presented})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertTrue(r.json()["access_token"])
+        self.assertTrue(r.json()["refresh_token"])
+
+    def test_a_near_miss_redirect_is_still_refused(self):
+        """Only the port is ignored: the hostname, the path and a non-loopback URI all have to match."""
+        loopback = self.register(["http://127.0.0.1:53127/callback"])
+        hosted = self.register()
+        self.login("owen")
+        cases = [(loopback, "http://localhost:61990/callback"),     # localhost is not 127.0.0.1
+                 (loopback, "http://127.0.0.1:61990/other"),        # another path
+                 (loopback, "https://127.0.0.1:61990/callback"),    # another scheme
+                 (hosted, CB + "2")]                               # a prefix of the hosted callback
+        for client_id, uri in cases:
+            with self.subTest(uri=uri):
+                r = self.c.get("/oauth/authorize", params=self.params(client_id, redirect_uri=uri),
+                               follow_redirects=False)
+                self.assertEqual(r.status_code, 400, r.text)
+                self.assertNotIn("location", r.headers)
+                self.assertIn("the app asking isn't registered here", r.text)
+                r = self.c.post("/oauth/authorize",
+                                data={**self.params(client_id, redirect_uri=uri), "decision": "allow"},
+                                follow_redirects=False)
+                self.assertEqual(r.status_code, 400, r.text)
+                self.assertNotIn("location", r.headers)
+
+    def test_redirect_matches_ignores_the_port_on_loopback_only(self):
+        from app.oauth import _redirect_matches
+        loopback = ["http://127.0.0.1:53127/callback"]
+        self.assertTrue(_redirect_matches(loopback, "http://127.0.0.1:53127/callback"))
+        self.assertTrue(_redirect_matches(loopback, "http://127.0.0.1:1/callback"))
+        self.assertTrue(_redirect_matches(loopback, "http://127.0.0.1/callback"))
+        self.assertFalse(_redirect_matches(loopback, "http://localhost:53127/callback"))
+        self.assertFalse(_redirect_matches(loopback, "http://127.0.0.1:53127/callback?x=1"))
+        self.assertFalse(_redirect_matches(loopback, "http://127.0.0.1:53127/callback#f"))
+        self.assertFalse(_redirect_matches(loopback, "http://127.0.0.1:53127/callback/"))
+        self.assertFalse(_redirect_matches(loopback, "http://evil.example:53127/callback"))
+        self.assertFalse(_redirect_matches(loopback, ""))
+        self.assertTrue(_redirect_matches([CB], CB))
+        self.assertFalse(_redirect_matches([CB], CB + "2"))
+        self.assertFalse(_redirect_matches([], "http://127.0.0.1:1/callback"))
+        # a registered URI that does not parse is skipped, not a 500
+        self.assertFalse(_redirect_matches(["http://[::1/callback"], "http://127.0.0.1:1/callback"))
+        self.assertFalse(_redirect_matches(loopback, "http://[::1/callback"))
+
     def test_a_bad_parameter_redirects_with_an_error(self):
         client_id = self.register()
         self.login("owen")
@@ -239,13 +415,34 @@ class OAuthTest(unittest.TestCase):
                 self.assertEqual(q["state"], ["xyz123"])
 
     def test_allow_issues_a_code_and_deny_does_not(self):
+        from app.auth import token_hash
+        from app.db import connect
         client_id = self.register()
-        self.login("owen")
+        me = self.login("owen")
         p = self.params(client_id)
         q = self.query_of(self.c.post("/oauth/authorize", data={**p, "decision": "allow"},
                                       follow_redirects=False))
-        self.assertTrue(q["code"][0])
+        code = q["code"][0]
+        self.assertTrue(code)
         self.assertEqual(q["state"], ["xyz123"])
+        # the row behind that code: bound to this client, this owner and this redirect_uri, and the
+        # code itself is stored only as a hash
+        conn = connect()
+        try:
+            rows = conn.execute("SELECT * FROM oauth_codes").fetchall()
+        finally:
+            conn.close()
+        self.assertEqual(len(rows), 1)
+        row = dict(rows[0])
+        self.assertEqual(row["code_hash"], token_hash(code))
+        self.assertEqual(row["client_id"], client_id)
+        self.assertEqual(row["user_id"], me["id"])
+        self.assertEqual(row["redirect_uri"], CB)
+        self.assertEqual(row["code_challenge"], p["code_challenge"])
+        self.assertEqual(row["scope"], "menus")
+        self.assertGreater(row["expires_at"], int(time.time()))
+        self.assertLessEqual(row["expires_at"], int(time.time()) + 600)
+        self.assertNotIn(code, [str(v) for v in row.values()])
         q = self.query_of(self.c.post("/oauth/authorize", data={**p, "decision": "deny"},
                                       follow_redirects=False))
         self.assertEqual(q["error"], ["access_denied"])
@@ -264,13 +461,22 @@ class OAuthTest(unittest.TestCase):
         self.assertIn("Only an owner can connect Claude.", r.text)
 
     def test_post_authorize_checks_sec_fetch_site(self):
+        from app.db import connect
         client_id = self.register()
         self.login("owen")
         p = {**self.params(client_id), "decision": "allow"}
-        r = self.c.post("/oauth/authorize", data=p, headers={"sec-fetch-site": "cross-site"},
-                        follow_redirects=False)
-        self.assertEqual(r.status_code, 403, r.text)
-        self.assertIn("That request didn't come from this page.", r.text)
+        for site in ("cross-site", "same-site"):
+            with self.subTest(site=site):
+                r = self.c.post("/oauth/authorize", data=p, headers={"sec-fetch-site": site},
+                                follow_redirects=False)
+                self.assertEqual(r.status_code, 403, r.text)
+                self.assertIn("That request didn't come from this page.", r.text)
+                self.assertNotIn("location", r.headers)
+                conn = connect()
+                try:  # no code was issued on the way out
+                    self.assertEqual(conn.execute("SELECT COUNT(*) FROM oauth_codes").fetchone()[0], 0)
+                finally:
+                    conn.close()
         # the browser's own value for a form on this page is allowed
         r = self.c.post("/oauth/authorize", data=p, headers={"sec-fetch-site": "same-origin"},
                         follow_redirects=False)
@@ -361,27 +567,44 @@ class OAuthTest(unittest.TestCase):
         self.assertEqual(fresh["expires_in"], 3600)
         self.assertEqual(fresh["scope"], "menus")
         self.assertEqual(fresh["token_type"], "Bearer")
-        r = self.c.post("/oauth/token", data={"grant_type": "refresh_token",
-                                              "refresh_token": tokens["refresh_token"],
-                                              "client_id": tokens["client_id"]})
+        with self.assertLogs("house_run_sheet", "WARNING") as cm:
+            r = self.c.post("/oauth/token", data={"grant_type": "refresh_token",
+                                                  "refresh_token": tokens["refresh_token"],
+                                                  "client_id": tokens["client_id"]})
         self.assertEqual(r.json()["error"], "invalid_grant")
+        self.assertIn("revoked OAuth token family", cm.output[0])
 
     def test_reusing_a_rotated_refresh_token_kills_the_family(self):
+        from app import oauth
+        from app.db import connect
         tokens = self.dance()
         fresh = self.c.post("/oauth/token", data={"grant_type": "refresh_token",
                                                   "refresh_token": tokens["refresh_token"],
                                                   "client_id": tokens["client_id"]}).json()
-        # presenting the rotated-away token is treated as a leak
-        r = self.c.post("/oauth/token", data={"grant_type": "refresh_token",
-                                              "refresh_token": tokens["refresh_token"],
-                                              "client_id": tokens["client_id"]})
-        self.assertEqual(r.json()["error"], "invalid_grant")
-        # …and it takes the rest of the family with it
-        r = self.c.post("/oauth/token", data={"grant_type": "refresh_token",
-                                              "refresh_token": fresh["refresh_token"],
-                                              "client_id": tokens["client_id"]})
+        conn = connect()
+        try:
+            self.assertIsNotNone(oauth.owner_for_bearer(conn, "Bearer " + fresh["access_token"]))
+            # presenting the rotated-away token is treated as a leak
+            with self.assertLogs("house_run_sheet", "WARNING") as cm:
+                r = self.c.post("/oauth/token", data={"grant_type": "refresh_token",
+                                                      "refresh_token": tokens["refresh_token"],
+                                                      "client_id": tokens["client_id"]})
+            self.assertEqual(r.json()["error"], "invalid_grant")
+            self.assertEqual(len(cm.output), 1)
+            self.assertIn("revoked OAuth token family", cm.output[0])
+            self.assertNotIn(tokens["refresh_token"], cm.output[0])
+            # the access token issued before the kill is dead too
+            self.assertIsNone(oauth.owner_for_bearer(conn, "Bearer " + fresh["access_token"]))
+        finally:
+            conn.close()
+        # …and the live refresh token goes with the rest of the family
+        with self.assertLogs("house_run_sheet", "WARNING") as cm:
+            r = self.c.post("/oauth/token", data={"grant_type": "refresh_token",
+                                                  "refresh_token": fresh["refresh_token"],
+                                                  "client_id": tokens["client_id"]})
         self.assertEqual(r.status_code, 400)
         self.assertEqual(r.json()["error"], "invalid_grant")
+        self.assertIn("revoked OAuth token family", cm.output[0])
 
     # ---- the bearer check ----
     def test_owner_for_bearer_accepts_only_a_live_owner_access_token(self):
@@ -412,6 +635,39 @@ class OAuthTest(unittest.TestCase):
                         (token_hash(name), tokens["client_id"], username, f"fam-{name}",
                          int(time.time()) + expires_in, now_iso()))
                     self.assertIsNone(oauth.owner_for_bearer(conn, "Bearer " + name))
+        finally:
+            conn.close()
+
+    def test_a_locked_database_does_not_break_a_valid_bearer(self):
+        """The last_used_at stamp is best effort: a write failure must not turn a good token into a 500."""
+        import sqlite3
+
+        from app import oauth
+        from app.db import connect
+        tokens = self.dance()
+
+        class NoWrites:
+            """Everything reads; every UPDATE fails the way a locked database does."""
+
+            def __init__(self, conn):
+                self._conn = conn
+
+            def execute(self, sql, *args):
+                if sql.lstrip().upper().startswith("UPDATE"):
+                    raise sqlite3.OperationalError("database is locked")
+                return self._conn.execute(sql, *args)
+
+        conn = connect()
+        try:
+            with self.assertLogs("house_run_sheet", "WARNING") as cm:
+                row = oauth.owner_for_bearer(NoWrites(conn), "Bearer " + tokens["access_token"])
+            self.assertIsNotNone(row)
+            self.assertEqual(row["username"], "owen")
+            self.assertEqual(len(cm.output), 1)
+            self.assertIn(row["family"], cm.output[0])
+            self.assertNotIn(tokens["access_token"], cm.output[0])
+            self.assertIsNone(conn.execute("SELECT last_used_at FROM oauth_tokens WHERE kind = 'access'")
+                              .fetchone()["last_used_at"])
         finally:
             conn.close()
 
@@ -459,10 +715,13 @@ class OAuthTest(unittest.TestCase):
         finally:
             conn.close()
         self.assertEqual(self.c.get("/api/oauth/connections").json()["connections"], [])
-        r = self.c.post("/oauth/token", data={"grant_type": "refresh_token",
-                                              "refresh_token": tokens["refresh_token"],
-                                              "client_id": tokens["client_id"]})
+        # the refresh token was revoked with the family, so presenting it reads as a replay
+        with self.assertLogs("house_run_sheet", "WARNING") as cm:
+            r = self.c.post("/oauth/token", data={"grant_type": "refresh_token",
+                                                  "refresh_token": tokens["refresh_token"],
+                                                  "client_id": tokens["client_id"]})
         self.assertEqual(r.json()["error"], "invalid_grant")
+        self.assertIn("revoked OAuth token family", cm.output[0])
         for bad in ("nope", "short", "not-a-real-family"):
             with self.subTest(family=bad):
                 r = self.c.delete(f"/api/oauth/connections/{bad}", headers=H)
