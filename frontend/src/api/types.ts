@@ -141,6 +141,17 @@ export interface Plan {
   got?: Record<string, boolean>;
 }
 
+/** One OAuth grant chain (a "family") behind the Claude connector — spec §7.8. */
+export interface Connection {
+  family: string;
+  clientName: string;
+  connectedAt: string;
+  lastUsedAt: string | null;
+}
+
+/** GET /api/oauth/connections. `mcpUrl` rides along here so staff never see it. */
+export interface ConnectionsResponse { connections: Connection[]; mcpUrl: string }
+
 export interface MeResponse { me: Me }
 export interface StateResponse {
   me: Me;
