@@ -394,19 +394,51 @@ class MenuTest(unittest.TestCase):
         self.assertEqual([i["id"] for i in plan["shopping"]], ["t01"])
 
     def test_save_session_clears_a_pre_connector_shared_item(self):
-        """Seed weeks mark shared items for: "both"; re-planning either session drops them (ruling R1)."""
+        """Seed weeks mark shared items for: "both"; re-planning either session drops them (ruling R1).
+
+        This is the one merge into a week that already had a row, so it is also where the row's own
+        columns are checked: an existing row keeps its source, note and created_by (spec §5.6 step 3).
+        """
         from app import menu, store
         from app.db import tx
         settings = store.get_settings(self.conn)
         before = store.get_plan(self.conn, "2026-09-28", include_shopping=True)["shopping"]
         self.assertTrue(any(i["for"] == "both" for i in before))
         fri_ids = {i["id"] for i in before if i["for"] == "fri"}
+        self.conn.execute("UPDATE meal_plans SET created_at = '2020-01-01T00:00:00.000000Z' WHERE week = ?",
+                          ("2026-09-28",))
+        was = dict(self.conn.execute("SELECT source, note, created_by, created_at FROM meal_plans "
+                                     "WHERE week = ?", ("2026-09-28",)).fetchone())
         normalized, shopping = menu.normalize_session(self.payload(week="2026-09-28"))
         with tx(self.conn):
             store.save_session(self.conn, "2026-09-28", "tue", menu.session_data(normalized, settings), shopping, None)
         after = store.get_plan(self.conn, "2026-09-28", include_shopping=True)["shopping"]
         self.assertEqual({i["id"] for i in after}, fri_ids | {"t01", "t02"})
         self.assertFalse(any(i["for"] == "both" for i in after))
+        now = dict(self.conn.execute("SELECT source, note, created_by, created_at FROM meal_plans "
+                                     "WHERE week = ?", ("2026-09-28",)).fetchone())
+        self.assertEqual((now["source"], now["note"], now["created_by"]),
+                         (was["source"], was["note"], was["created_by"]))
+        self.assertEqual(was["created_at"], "2020-01-01T00:00:00.000000Z")
+        self.assertNotEqual(now["created_at"], was["created_at"])  # only data and created_at move
+
+    def test_a_mixed_week_reads_back_in_a_stable_order(self):
+        """sort_order restarts at 0 for each session, so equal positions have to be broken by id."""
+        from app import store
+        from app.db import now_iso
+        week = "2026-11-02"
+        self.conn.execute("INSERT INTO meal_plans (week, data, source, note, created_at) "
+                          "VALUES (?, '{\"sessions\": {}}', 'test', '', ?)", (week, now_iso()))
+        for item_id, session in (("t01", "tue"), ("f01", "fri"), ("t02", "tue"), ("f02", "fri")):
+            self.conn.execute(
+                """INSERT INTO shopping_items (week, id, item, buy, aisle, for_session, stock, search, sort_order)
+                   VALUES (?, ?, ?, '1', 'Pantry', ?, 0, '', ?)""",
+                (week, item_id, f"Item {item_id}", session, 0 if item_id.endswith("1") else 1))
+        rows = self.conn.execute("SELECT id, sort_order FROM shopping_items WHERE week = ?", (week,)).fetchall()
+        self.assertEqual(sorted((r["id"], r["sort_order"]) for r in rows),
+                         [("f01", 0), ("f02", 1), ("t01", 0), ("t02", 1)])  # two rows share each position
+        plan = store.get_plan(self.conn, week, include_shopping=True)
+        self.assertEqual([i["id"] for i in plan["shopping"]], ["f01", "t01", "f02", "t02"])
 
     def test_save_result_summarises_the_session(self):
         from app import menu, store
