@@ -227,6 +227,16 @@ class MenuTest(unittest.TestCase):
         self.assertEqual(problems, ["main: 612 kcal per portion, target 500 ±35.",
                                     "dessert: 44 g protein per portion, need at least 47."])
 
+    def test_a_protein_mean_of_exactly_46_5_rounds_up_like_the_meals_pill(self):
+        """Math.round sends 46.5 up to 47, so the pill is green; Python's round() would say 46 and redden it."""
+        from app import menu, store
+        args = self.payload(recipes={"breakfast": self.recipe("Half-batch oats", 2, 500, 46.5),
+                                     "main": self.recipe("Beef burritos", 9, 500, 51),
+                                     "dessert": self.recipe("Chocolate overnight oats", 3, 500, 49)})
+        self.assertEqual(args["recipes"]["breakfast"]["ingredients"][0]["protein"], 93.0)  # 93 g over 2 portions
+        normalized, _ = menu.normalize_session(args)
+        self.assertEqual(menu.validate_session(normalized, store.get_settings(self.conn)), [])
+
     def test_missing_and_empty_fields_are_reported(self):
         from app import menu, store
         args = self.payload()
@@ -246,7 +256,9 @@ class MenuTest(unittest.TestCase):
         from app import menu, store
         args = self.payload(
             timeline=[f"Line {n}." for n in range(13)],
-            shopping=[{"item": f"Item {n}", "buy": "1", "aisle": "Pantry", "stock": False, "search": f"item {n}"}
+            # the 61st item is over the per-item cap too, so the slice below is doing real work
+            shopping=[{"item": "x" * 200 if n == 60 else f"Item {n}", "buy": "1", "aisle": "Pantry",
+                       "stock": False, "search": f"item {n}"}
                       for n in range(61)],
             leftovers=[f"About {n} g of something" for n in range(21)])
         args["recipes"]["main"]["title"] = "B" * 121
@@ -263,6 +275,30 @@ class MenuTest(unittest.TestCase):
             self.assertIn(line, problems)
         # one "too many" line, not one per item over the cap
         self.assertEqual(len([p for p in problems if p.startswith("shopping item ")]), 0)
+
+    def test_hostile_numbers_become_problem_lines_not_crashes(self):
+        """json.loads accepts Infinity, NaN, 1e400 and 400-digit integers; none may escape as an exception (R16)."""
+        from app import menu, store
+        settings = store.get_settings(self.conn)
+        kcal_line = "breakfast: 0 kcal per portion, target 500 ±35."       # the ingredient contributes 0.0 kcal
+        portions_line = "breakfast: portions must be 1 or more."           # an unusable count falls back to 0
+        huge = "9" * 400                                                   # a valid JSON integer, far beyond a float
+        cases = [("kcal", "Infinity", kcal_line), ("kcal", "NaN", kcal_line), ("kcal", "1e400", kcal_line),
+                 ("kcal", '"Infinity"', kcal_line), ("kcal", huge, kcal_line),
+                 ("portions", "Infinity", portions_line), ("portions", huge, portions_line)]
+        for field, literal, expected in cases:
+            with self.subTest(field=field, value=literal[:20]):
+                args = self.payload()
+                if field == "kcal":
+                    args["recipes"]["breakfast"]["ingredients"][0]["kcal"] = -12345
+                else:
+                    args["recipes"]["breakfast"]["portions"] = -12345
+                # Patch the JSON text, then parse it, so this runs the wire path an MCP request really takes.
+                wire = json.dumps(args).replace("-12345", literal)
+                normalized, _ = menu.normalize_session(json.loads(wire))
+                problems = menu.validate_session(normalized, settings)
+                self.assertIsInstance(problems, list)
+                self.assertEqual(problems, [expected])
 
     def test_a_week_that_is_not_a_monday_is_reported(self):
         from app import menu, store

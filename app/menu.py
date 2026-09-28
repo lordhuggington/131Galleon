@@ -6,6 +6,7 @@ Nothing in this module calls a model or talks to the network.
 from __future__ import annotations
 
 import json
+import math
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -250,10 +251,17 @@ def _text(v) -> str:
 
 
 def _num(v) -> float:
+    # JSON allows Infinity, NaN and integers far too long for a float; none of those may reach a round().
     try:
-        return float(v)
-    except (TypeError, ValueError):
+        x = float(v)
+    except (TypeError, ValueError, OverflowError):
         return 0.0
+    return x if math.isfinite(x) else 0.0
+
+
+def _round(x: float) -> int:
+    """JavaScript's Math.round (half up), so an error line and the Meals pill can never disagree."""
+    return math.floor(x + 0.5)
 
 
 def normalize_session(args) -> tuple[dict, list[dict]]:
@@ -273,8 +281,9 @@ def normalize_session(args) -> tuple[dict, list[dict]]:
         if not isinstance(r, dict):
             continue  # validate_session reports "recipes: <slot> is missing."
         try:
-            portions = int(r.get("portions") or 0)
-        except (TypeError, ValueError):
+            # float() first, so Infinity, NaN and a 400-digit integer all land in the except.
+            portions = int(float(r.get("portions") or 0))
+        except (TypeError, ValueError, OverflowError):
             portions = 0
         raw_ings = r.get("ingredients") if isinstance(r.get("ingredients"), list) else []
         raw_steps = r.get("steps") if isinstance(r.get("steps"), list) else []
@@ -358,9 +367,10 @@ def validate_session(normalized: dict, settings: dict) -> list[str]:
                 problems.append(f"{slot} step {n}: too long ({MAX_STEP} characters max).")
         if r["ingredients"] and r["portions"] >= 1:
             # Identical to frontend/src/lib/macros.ts: macroStatus. Both sides are rounded to whole
-            # numbers for the comparison and for the message, so an error line and the Meals pill agree.
-            kcal_pp = round(sum(i["kcal"] for i in r["ingredients"]) / r["portions"])
-            protein_pp = round(sum(i["protein"] for i in r["ingredients"]) / r["portions"])
+            # numbers for the comparison and for the message — by _round, which rounds half up the way
+            # Math.round does — so an error line and the Meals pill can never disagree.
+            kcal_pp = _round(sum(i["kcal"] for i in r["ingredients"]) / r["portions"])
+            protein_pp = _round(sum(i["protein"] for i in r["ingredients"]) / r["portions"])
             if abs(kcal_pp - t_kcal) > t_kcal * 0.07:
                 problems.append(f"{slot}: {kcal_pp} kcal per portion, target {t_kcal} ±{round(t_kcal * 0.07)}.")
             if protein_pp < t_protein - 3:
@@ -410,8 +420,8 @@ def save_result(week: str, session: str, data: dict, shopping: list[dict]) -> tu
     recipes, parts = {}, []
     for slot in SLOTS:
         r = data["recipes"][slot]
-        kcal = round(sum(i["kcal"] for i in r["ingredients"]) / r["portions"])
-        protein = round(sum(i["protein"] for i in r["ingredients"]) / r["portions"])
+        kcal = _round(sum(i["kcal"] for i in r["ingredients"]) / r["portions"])
+        protein = _round(sum(i["protein"] for i in r["ingredients"]) / r["portions"])
         recipes[slot] = {"title": r["title"], "portions": r["portions"],
                          "kcalPerPortion": kcal, "proteinPerPortion": protein}
         parts.append(f"{r['title']} ({r['portions']} × {kcal} kcal / {protein} g)")
