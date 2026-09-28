@@ -367,6 +367,7 @@ class OAuthTest(unittest.TestCase):
         cases = [(loopback, "http://localhost:61990/callback"),     # localhost is not 127.0.0.1
                  (loopback, "http://127.0.0.1:61990/other"),        # another path
                  (loopback, "https://127.0.0.1:61990/callback"),    # another scheme
+                 (loopback, "http://127.0.0.1:1/call\tback"),       # urlsplit would drop the tab
                  (hosted, CB + "2")]                               # a prefix of the hosted callback
         for client_id, uri in cases:
             with self.subTest(uri=uri):
@@ -399,6 +400,10 @@ class OAuthTest(unittest.TestCase):
         # a registered URI that does not parse is skipped, not a 500
         self.assertFalse(_redirect_matches(["http://[::1/callback"], "http://127.0.0.1:1/callback"))
         self.assertFalse(_redirect_matches(loopback, "http://[::1/callback"))
+        # urlsplit drops \r, \n and \t, so the parsed URI is not the one that would be redirected to
+        self.assertFalse(_redirect_matches(loopback, "http://127.0.0.1:1/call\tback"))
+        self.assertFalse(_redirect_matches(loopback, "http://12\r7.0.0.1:1/callback"))
+        self.assertFalse(_redirect_matches(loopback, "http://127.0.0.1:1/call\nback"))
 
     def test_a_bad_parameter_redirects_with_an_error(self):
         client_id = self.register()

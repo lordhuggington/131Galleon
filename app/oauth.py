@@ -167,6 +167,9 @@ def _redirect_matches(registered: list[str], presented: str) -> bool:
     opens (spec §3), so http://127.0.0.1:53127/callback has to match http://127.0.0.1:61990/callback.
     Everything else is an exact string match, and localhost is not interchangeable with 127.0.0.1.
     """
+    if any(c in presented for c in "\r\n\t"):
+        # urlsplit drops these silently, so the URI it parses is not the one we would redirect to.
+        return False
     if presented in registered:
         return True
     try:
