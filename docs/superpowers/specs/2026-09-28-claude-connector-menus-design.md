@@ -680,7 +680,7 @@ export interface Connection {
 export interface ConnectionsResponse { connections: Connection[]; mcpUrl: string }
 ```
 
-**`ShoppingScreen.tsx`:** the single "Expected leftovers" card becomes up to two cards, `After Tuesday's cook` and `After Friday's cook`, each rendered only when `plan.sessions[key]?.leftovers?.length` is non-zero, reading from `plan.sessions.tue` / `plan.sessions.fri` rather than `plan.leftovers`. They are **not** filtered by the Everything / Deliver by Tue / Friday-only chips: that filter picks which grocery order you are placing, while leftovers describe what the cooking leaves behind, so hiding one would just lose information. The trailing line becomes "The next session's menu is planned to use these up first."
+**`ShoppingScreen.tsx`:** the single "Expected leftovers" card becomes up to two cards, `After Tuesday's cook` and `After Friday's cook`, each rendered only when `plan.sessions[key]?.leftovers?.length` is non-zero, reading from `plan.sessions.tue` / `plan.sessions.fri` rather than `plan.leftovers`. They are **not** filtered by the Everything / Deliver by Tue / Friday-only chips: that filter picks which grocery order you are placing, while leftovers describe what the cooking leaves behind, so hiding one would just lose information. The trailing line becomes "The next session's menu is planned to use these up first." Its empty state becomes "No menu for this week yet — plan it in Claude and the shopping list will appear here." with no link to Meals, since nothing there creates a menu any more.
 
 **`frontend/src/features/setup/ClaudeCard.tsx`** (new, owner-only, rendered in `SetupScreen` between `PeopleCard` and `TasksCard`):
 

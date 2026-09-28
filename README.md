@@ -37,8 +37,10 @@ out with you in the chat; then posts the finished session with `save_session`. T
 refuses anything off target with a list of what to fix, so Claude corrects it and posts again. Open **Meals**
 and it is there, with its shopping list on **Shopping**.
 
-One session per call: saving Tuesday leaves Friday's recipes, leftovers and ticked shopping items alone. There
-is no "Create menu" button in the app any more, and no Anthropic API key.
+One session per call: saving Tuesday leaves Friday's recipes, leftovers and ticked shopping items alone. (A
+week planned before the connector also loses its shared "both" shopping rows the first time either session is
+re-planned; weeks planned through the connector have none.) There is no "Create menu" button in the app any
+more, and no Anthropic API key.
 
 ## Run it locally
 

@@ -35,7 +35,6 @@ export function ClaudeCard() {
       setError("");
     } catch (e) {
       if (!alive.current) return;
-      setConnections([]);
       setError(e instanceof Error ? e.message : "Couldn't load the Claude connections.");
     }
   }, []);
@@ -56,6 +55,9 @@ export function ClaudeCard() {
   }, [copyText]);
 
   if (!isOwner) return null;
+
+  // Only a failed first load leaves the list null with an error; a failed disconnect keeps the list.
+  const failed = connections === null && error !== "";
 
   async function copy() {
     if (!mcpUrl) return;
@@ -90,7 +92,7 @@ export function ClaudeCard() {
       </p>
 
       <div className="mcp-url">
-        <span className="mono">{mcpUrl || "Loading…"}</span>
+        <span className="mono">{failed ? "Not available" : mcpUrl || "Loading…"}</span>
         <span className="spacer" />
         <Button onClick={() => void copy()} disabled={!mcpUrl}>
           Copy
@@ -116,7 +118,18 @@ export function ClaudeCard() {
           <span className="mono small muted">{connections?.length ?? 0}</span>
         </div>
         {connections === null ? (
-          <div className="conn small muted">Loading…</div>
+          <div className="conn small muted">
+            {failed ? (
+              <>
+                Couldn't load these.{" "}
+                <button type="button" className="linkish" onClick={() => void load()}>
+                  Try again
+                </button>
+              </>
+            ) : (
+              "Loading…"
+            )}
+          </div>
         ) : connections.length === 0 ? (
           <div className="conn small muted">Not connected yet.</div>
         ) : (
@@ -131,7 +144,11 @@ export function ClaudeCard() {
                     : `last used ${fmtStamp(connection.lastUsedAt)}`}
                 </div>
               </div>
-              <Button variant="danger" onClick={() => void disconnect(connection.family)}>
+              <Button
+                variant="danger"
+                aria-label={`Disconnect ${connection.clientName}`}
+                onClick={() => void disconnect(connection.family)}
+              >
                 Disconnect
               </Button>
             </div>

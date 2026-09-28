@@ -15,7 +15,7 @@ const SESSIONS: SessionKey[] = ["tue", "fri"];
 const SESSION_LABEL: Record<SessionKey, string> = { tue: "After Tuesday's cook", fri: "After Friday's cook" };
 
 export function ShoppingScreen() {
-  const { state, dispatch, mutate, goToTab } = useApp();
+  const { state, dispatch, mutate } = useApp();
   const { toast } = useToast();
   const week = state.ui.week;
   const filter = state.ui.shopFilter;
@@ -68,13 +68,7 @@ export function ShoppingScreen() {
     return (
       <div className="section">
         <WeekNav />
-        <Card className="empty">
-          No menu for this week yet. Create one on the{" "}
-          <button type="button" className="linkish" onClick={() => goToTab("meals")}>
-            Meals
-          </button>{" "}
-          tab.
-        </Card>
+        <Card className="empty">No menu for this week yet — plan it in Claude and the shopping list will appear here.</Card>
       </div>
     );
   }
