@@ -8,10 +8,14 @@
 - Visit photos are files under `HRS_PHOTOS_DIR` (default `data/photos`) with random names (`secrets.token_hex(16)`), served by `GET /photos/{filename}` — registered before the static mount and outside `/api/` on purpose, so the `no-store` header doesn't stop the browser caching them. The handler looks the filename up in `visit_photos` before touching the disk; keep it that way.
 - `user_dict` (everyone's phone and door code) is owner-only output; `me_dict` gives a person only their own. Don't widen either.
 - Never log a door code or a sign-in code, and never log a full phone number — redact it the way `app/sms.py: _redact` does.
+- Menus come from the Claude connector (`app/mcp.py` + `app/oauth.py`), never a server-side model call. There is no `ANTHROPIC_*` config and nothing generates a menu in this repo.
+- `/mcp` is bearer-authenticated and owner-only; `/oauth/*` and `/.well-known/*` are public. All of them send `Cache-Control: no-store`.
 - Front end lives in `frontend/` (React 19 + TypeScript + Vite). `cd frontend && npm test` (Vitest, node env, pure logic in `src/lib` only) and `npm run typecheck`; `npm run build` writes `static/`.
 - `static/` is a build output: gitignored, never edited by hand, rebuilt by `npm run build` and by the Dockerfile's node stage.
 - CSP is `script-src 'self'`: no inline `<script>` in the built page (check with a grep after building), and never use `dangerouslySetInnerHTML`.
+- The OAuth consent page's script lives in `frontend/public/oauth.js` (copied verbatim into `static/` by the build and served at `/oauth.js`), because the CSP forbids an inline script there too.
 - Frontend dependencies stay minimal: react, react-dom, and dev-only typescript, vite, @vitejs/plugin-react, @types/react, @types/react-dom, vitest. Adding anything else needs a reason in the PR.
 - Non-GET requests must send `X-HRS: 1` (CSRF guard), including the raw-body photo upload.
 - Visit days are Tuesday and Friday; weeks are keyed by their Monday (`YYYY-MM-DD`).
+- A week's leftovers live inside each session (`plan.sessions.tue.leftovers`), not at the top of the plan.
 - Never commit `.env` or anything in `data/`.

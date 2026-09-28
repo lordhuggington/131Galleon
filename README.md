@@ -1,6 +1,6 @@
 # House Run Sheet
 
-A small self-hosted app for running a home with a housekeeper: a checklist for each Tuesday and Friday visit, one-off jobs for particular days, high-protein batch meal prep written by Claude, and a shopping list to order from.
+A small self-hosted app for running a home with a housekeeper: a checklist for each Tuesday and Friday visit, one-off jobs for particular days, high-protein batch meal prep planned with Claude in the Claude app, and a shopping list to order from.
 
 Two kinds of people:
 
@@ -12,7 +12,7 @@ Two kinds of people:
 | Add one-off jobs to a visit | ✓ | |
 | Shopping list | ✓ | |
 | Setup: tasks, meal settings, people, door codes | ✓ | |
-| Generate a week's menu with Claude | ✓ | |
+| Claude connector (OAuth consent, connections list) | ✓ | |
 | Delete anyone's photo | ✓ | own photos only |
 
 Staff get a free-text label ("Housekeeper", "Builder", "Pool service"), so anyone can be added without
@@ -20,6 +20,25 @@ code changes. With Twilio set up (see below), everyone signs in with a code text
 also keep a password as a backup.
 
 Stack: Python 3.11+, [Starlette](https://www.starlette.io/) (the framework under FastAPI) and SQLite on the server — three dependencies: `starlette`, `uvicorn`, `httpx`. The front end is React 19 + TypeScript, built with [Vite](https://vite.dev/) from `frontend/` into `static/` (build output, not committed).
+
+## Planning a menu
+
+Menus are not written by the server. The app is a **remote MCP connector** for the Claude app, and each prep
+session is planned by chatting.
+
+Once, to connect: in Claude, **Settings → Connectors → Add custom connector**, paste the URL from
+**Setup → Claude** (`https://your-host/mcp`), and sign in as an owner on the consent page Claude opens. The
+grant then shows up under **Setup → Claude** with when it was last used and a **Disconnect** button.
+
+After that, in any Claude chat: say which Tuesday or Friday you are cooking and roughly what you fancy. Claude
+calls `get_brief` for that day's portion counts, kcal and protein targets, store, likes, dislikes, pantry, the
+other session's leftovers and the titles not to repeat; works the whole-batch amounts and per-ingredient macros
+out with you in the chat; then posts the finished session with `save_session`. The app re-adds the numbers and
+refuses anything off target with a list of what to fix, so Claude corrects it and posts again. Open **Meals**
+and it is there, with its shopping list on **Shopping**.
+
+One session per call: saving Tuesday leaves Friday's recipes, leftovers and ticked shopping items alone. There
+is no "Create menu" button in the app any more, and no Anthropic API key.
 
 ## Run it locally
 
@@ -32,7 +51,7 @@ python -m app.cli import-seed seed                      # tasks, settings and th
 python -m app.cli create-user --username owen --name "Owen" --role owner
 python -m app.cli create-user --username maria --name "Maria" --role staff --label Housekeeper
 
-export ANTHROPIC_API_KEY=sk-ant-...                     # only needed for "Create menu"
+export HRS_PUBLIC_URL=http://localhost:8000             # what the Claude connector advertises
 uvicorn app.main:app --reload --port 8000                # terminal 1: the API on :8000
 ```
 
@@ -45,6 +64,8 @@ npm run dev                                             # Vite on :5173, proxyin
 ```
 
 Open http://localhost:5173 while developing. `npm test` runs the Vitest suites for the date, schedule, macro, shopping and phone helpers; `npm run typecheck` runs TypeScript.
+
+The consent page Claude opens when you connect is served by the API on :8000 and loads `/oauth.js` from `static/`, so run `npm run build` once (below) before trying the connector locally.
 
 For production (and to serve everything from uvicorn on :8000), build the front end once:
 
@@ -64,7 +85,7 @@ On a small droplet (1 GB is plenty):
 
 ```bash
 git clone <this repo> /opt/house-run-sheet && cd /opt/house-run-sheet
-cp .env.example .env && nano .env                        # ANTHROPIC_API_KEY, TWILIO_*, tunnel token
+cp .env.example .env && nano .env                        # HRS_PUBLIC_URL, TWILIO_*, tunnel token
 mkdir -p data backups && sudo chown 10001:10001 data     # container runs as uid 10001
 
 docker compose build
@@ -164,7 +185,9 @@ app/
   api.py       JSON API routes + role checks
   auth.py      scrypt passwords, cookie sessions, login lockout
   store.py     data access for tasks, visits, settings, meal plans
-  ai.py        menu prompt, Claude API streaming call, background job
+  menu.py      the brief, the rules, session validation
+  oauth.py     OAuth 2.1 server (register, consent, token)
+  mcp.py       the MCP endpoint Claude talks to
   db.py        SQLite connection + migration runner
   cli.py       admin commands
 migrations/    numbered .sql files (tracked with PRAGMA user_version)
@@ -174,7 +197,7 @@ frontend/      React 19 + TypeScript app (Vite)
   src/features/  home, visit, meals, shopping, setup, auth screens
 static/        build output from `npm run build` (gitignored, served by Starlette)
 seed/          tasks, settings and the starter week exported from the Claude-hosted version
-tests/         unittest suite (API, roles, generation with a mocked Claude API)
+tests/         unittest suite (API, roles, OAuth dance, MCP tools)
 deploy/        backup script
 ```
 
