@@ -113,6 +113,8 @@ export interface PlanSession {
   covers: string;
   timeline: string[];
   recipes: Partial<Record<Slot, Recipe>>;
+  /** What this session's cook is expected to leave behind, for the next session to use up. */
+  leftovers: string[];
 }
 
 export interface ShoppingItem {
@@ -133,7 +135,6 @@ export interface Plan {
   note: string;
   createdAt: string;
   sessions: Partial<Record<SessionKey, PlanSession>>;
-  leftovers: string[];
   /** Owner-only. */
   shopping?: ShoppingItem[];
   /** Owner-only: itemId -> true. */
