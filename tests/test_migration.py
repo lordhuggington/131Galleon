@@ -203,7 +203,7 @@ class MigrationTest(unittest.TestCase):
             conn.execute("INSERT INTO task_completions (visit_date, task_id, done_at, done_by) "
                          "VALUES ('2026-09-29', 't01', 'x', 2)")
 
-            self.assertEqual(migrate(conn), 5)
+            self.assertEqual(migrate_to(conn, 5), 5)
 
             names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
             for gone in ("settings", "meal_plans", "shopping_items", "oauth_clients", "oauth_codes", "oauth_tokens"):
@@ -227,6 +227,25 @@ class MigrationTest(unittest.TestCase):
             with self.assertRaises(sqlite3.IntegrityError):  # quarter hours only
                 conn.execute("INSERT INTO hours_claims (user_id, work_date, minutes, created_at, updated_at) "
                              "VALUES (2, '2026-10-20', 20, 'x', 'x')")
+        finally:
+            conn.close()
+
+    def test_006_unpins_tasks_from_tuesday_and_friday(self):
+        from app.db import connect
+        conn = connect(self.path)
+        try:
+            apply_up_to(conn, 5)
+            for tid, day in (("t01", "tue"), ("t02", "fri"), ("t03", "any")):
+                conn.execute("INSERT INTO tasks (id, title, day, created_at, updated_at) VALUES (?, 'x', ?, 'x', 'x')",
+                             (tid, day))
+            conn.execute("INSERT INTO task_completions (visit_date, task_id, done_at) VALUES ('2026-09-29', 't01', 'x')")
+
+            self.assertEqual(migrate_to(conn, 6), 6)
+
+            self.assertEqual({r["id"]: r["day"] for r in conn.execute("SELECT id, day FROM tasks")},
+                             {"t01": "any", "t02": "any", "t03": "any"})
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM task_completions").fetchone()[0], 1)
+            self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
         finally:
             conn.close()
 

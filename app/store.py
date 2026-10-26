@@ -9,8 +9,8 @@ from .db import now_iso
 
 # ---------- tasks ----------
 def task_dict(r: sqlite3.Row) -> dict:
-    return {"id": r["id"], "title": r["title"], "area": r["area"], "freq": r["freq"], "day": r["day"],
-         "notes": r["notes"], "order": r["sort_order"], "active": bool(r["active"])}
+    return {"id": r["id"], "title": r["title"], "area": r["area"], "freq": r["freq"],
+            "notes": r["notes"], "order": r["sort_order"], "active": bool(r["active"])}
 
 
 def list_tasks(conn: sqlite3.Connection) -> list[dict]:
@@ -18,20 +18,27 @@ def list_tasks(conn: sqlite3.Connection) -> list[dict]:
 
 
 def upsert_task(conn: sqlite3.Connection, tid: str, t: dict) -> None:
+    """Visits happen on any day, so tasks.day is always 'any' (the column stays only for its CHECK)."""
     now = now_iso()
     conn.execute(
         """INSERT INTO tasks (id, title, area, freq, day, notes, active, sort_order, created_at, updated_at)
-           VALUES (:id, :title, :area, :freq, :day, :notes, :active, :sort_order, :now, :now)
-           ON CONFLICT(id) DO UPDATE SET title=excluded.title, area=excluded.area, freq=excluded.freq, day=excluded.day,
+           VALUES (:id, :title, :area, :freq, 'any', :notes, :active, :sort_order, :now, :now)
+           ON CONFLICT(id) DO UPDATE SET title=excluded.title, area=excluded.area, freq=excluded.freq, day='any',
              notes=excluded.notes, active=excluded.active, sort_order=excluded.sort_order, updated_at=excluded.updated_at""",
         {"id": tid, "title": t["title"], "area": t.get("area") or "Whole house", "freq": t.get("freq") or "visit",
-         "day": t.get("day") or "any", "notes": t.get("notes") or "",
+         "notes": t.get("notes") or "",
          "active": 1 if t.get("active", True) else 0, "sort_order": int(t.get("order") or 0), "now": now},
     )
 
 
 # ---------- visits ----------
 def list_visits(conn: sqlite3.Connection, days_back: int = 400) -> dict:
+    """Everything recorded per date since `days_back` ago.
+
+    An extra (one-off job) sits under the date it was done on, or, while it is still open, under the
+    date it was added on; open ones are always included however old, so the page can gather every
+    open extra onto today's run sheet.
+    """
     since = (date.today() - timedelta(days=days_back)).isoformat()
     visits: dict[str, dict] = {}
 
@@ -42,7 +49,7 @@ def list_visits(conn: sqlite3.Connection, days_back: int = 400) -> dict:
         v(r["date"])["note"] = r["note"]
     for r in conn.execute("SELECT visit_date, task_id, done_at FROM task_completions WHERE visit_date >= ?", (since,)):
         v(r["visit_date"])["done"][r["task_id"]] = r["done_at"]
-    for r in conn.execute("SELECT * FROM visit_extras WHERE visit_date >= ? ORDER BY created_at", (since,)):
+    for r in conn.execute("SELECT * FROM visit_extras WHERE visit_date >= ? OR done_at IS NULL ORDER BY created_at, id", (since,)):
         v(r["visit_date"])["extras"][str(r["id"])] = {
             "title": r["title"], "notes": r["notes"], "done": r["done_at"] is not None, "createdAt": r["created_at"]}
     for r in conn.execute("""SELECT p.*, u.display_name FROM visit_photos p

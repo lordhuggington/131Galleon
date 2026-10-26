@@ -26,7 +26,6 @@ CODE_RE = re.compile(r"^\d{4,10}$")
 USERNAME_RE = re.compile(r"^[a-z0-9._-]{2,64}$")
 DOOR_CODE_RE = re.compile(r"^[0-9]{4,8}$")  # ASCII only: a keypad has no Unicode digits
 FREQS = ("visit", "weekly", "fortnightly", "monthly")
-DAYS = ("any", "tue", "fri")
 KINDS = ("housekeeper", "builder")
 JOB_STATUSES = ("todo", "doing", "done")
 CLAIM_STATUSES = ("submitted", "approved", "paid")
@@ -312,8 +311,6 @@ def _task_fields(body: dict, partial: bool) -> dict:
         out["area"] = s(body, "area", 60) or "Whole house"
     if not partial or "freq" in body:
         out["freq"] = choice(body, "freq", FREQS, "visit")
-    if not partial or "day" in body:
-        out["day"] = choice(body, "day", DAYS, "any")
     if not partial or "notes" in body:
         out["notes"] = s(body, "notes", 500)
     return out
@@ -392,10 +389,15 @@ def _extra_id(request) -> int:
 
 @endpoint(kind="housekeeper")
 def set_extra_done(request, conn, user, body):
+    """An extra carries over until it's done; ticking it files it under the path's date, the day it was done.
+    Unticking leaves the date alone, so it shows as open on today's run sheet again."""
     d, eid = path_date(request), _extra_id(request)
     done = boolean(body, "done")
-    cur = conn.execute("UPDATE visit_extras SET done_at = ?, done_by = ? WHERE id = ? AND visit_date = ?",
-                       (now_iso() if done else None, user["id"] if done else None, eid, d))
+    if done:
+        cur = conn.execute("UPDATE visit_extras SET done_at = ?, done_by = ?, visit_date = ? WHERE id = ?",
+                           (now_iso(), user["id"], d, eid))
+    else:
+        cur = conn.execute("UPDATE visit_extras SET done_at = NULL, done_by = NULL WHERE id = ?", (eid,))
     if cur.rowcount == 0:
         raise ApiError(404, "That job doesn't exist.")
     return {"ok": True}
@@ -403,8 +405,8 @@ def set_extra_done(request, conn, user, body):
 
 @endpoint(role="owner")
 def delete_extra(request, conn, user, _body):
-    d, eid = path_date(request), _extra_id(request)
-    conn.execute("DELETE FROM visit_extras WHERE id = ? AND visit_date = ?", (eid, d))
+    path_date(request)  # still validated; the id alone finds the extra
+    conn.execute("DELETE FROM visit_extras WHERE id = ?", (_extra_id(request),))
     return {"ok": True}
 
 

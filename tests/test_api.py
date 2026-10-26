@@ -306,17 +306,56 @@ class ApiTest(unittest.TestCase):
         extras = self.c.get("/api/state").json()["visits"]["2026-10-02"]["extras"]
         self.assertTrue(extras[eid]["done"])
 
+    def test_an_extra_carries_over_and_lands_on_the_day_it_was_done(self):
+        self.login("owen")
+        eid = self.c.post("/api/visits/2026-10-02/extras", json={"title": "Sort hall closet"}, headers=H).json()["id"]
+        old = self.c.post("/api/visits/2024-01-05/extras", json={"title": "Ancient job"}, headers=H).json()["id"]
+        visits = self.c.get("/api/state").json()["visits"]
+        self.assertFalse(visits["2026-10-02"]["extras"][eid]["done"])
+        self.assertIn(old, visits["2024-01-05"]["extras"])  # open, so sent however old it is
+        self.c.post("/api/logout", headers=H)
+        self.login("maria")
+        # done on a later day, through that day's path: it moves to that day
+        r = self.c.patch(f"/api/visits/2026-10-09/extras/{eid}", json={"done": True}, headers=H)
+        self.assertEqual(r.status_code, 200)
+        visits = self.c.get("/api/state").json()["visits"]
+        self.assertTrue(visits["2026-10-09"]["extras"][eid]["done"])
+        self.assertNotIn(eid, visits.get("2026-10-02", {}).get("extras", {}))
+        # unticked again it stays on the day it was filed under, open
+        self.c.patch(f"/api/visits/2026-10-12/extras/{eid}", json={"done": False}, headers=H)
+        self.assertFalse(self.c.get("/api/state").json()["visits"]["2026-10-09"]["extras"][eid]["done"])
+        # unknown ids are still a 404, and staff still can't delete
+        self.assertEqual(self.c.patch("/api/visits/2026-10-09/extras/99999", json={"done": True}, headers=H).status_code, 404)
+        self.assertEqual(self.c.patch("/api/visits/2026-10-09/extras/nope", json={"done": True}, headers=H).status_code, 404)
+        r = self.c.delete(f"/api/visits/2026-10-09/extras/{eid}", headers=H)
+        self.assertEqual((r.status_code, r.json()["error"]), (403, "Only an owner can do that."))
+        # the owner deletes by id, whatever date is in the path
+        self.c.post("/api/logout", headers=H)
+        self.login("owen")
+        self.assertEqual(self.c.delete(f"/api/visits/2026-10-26/extras/{eid}", headers=H).status_code, 200)
+        self.assertNotIn("2026-10-09", self.c.get("/api/state").json()["visits"])
+
     # ---- owner ----
     def test_task_crud(self):
         self.login("owen")
-        t = self.c.post("/api/tasks", json={"title": "Clean garage fridge", "area": "Garage", "freq": "monthly", "day": "fri"}, headers=H).json()["task"]
+        t = self.c.post("/api/tasks", json={"title": "Clean garage fridge", "area": "Garage", "freq": "monthly"}, headers=H).json()["task"]
         self.assertEqual(t["freq"], "monthly")
+        self.assertNotIn("day", t)  # visits happen on any day; tasks aren't pinned to one
         r = self.c.patch(f"/api/tasks/{t['id']}", json={"freq": "yearly"}, headers=H)
         self.assertEqual(r.status_code, 400)
-        self.c.patch(f"/api/tasks/{t['id']}", json={"notes": "Top shelf first"}, headers=H)
+        t = self.c.patch(f"/api/tasks/{t['id']}", json={"notes": "Top shelf first", "freq": "weekly"}, headers=H).json()["task"]
+        self.assertEqual((t["notes"], t["freq"]), ("Top shelf first", "weekly"))
+        self.assertNotIn("day", t)
+        self.assertNotIn("day", self.c.get("/api/state").json()["tasks"][0])
         self.c.delete(f"/api/tasks/{t['id']}", headers=H)
         ids = [x["id"] for x in self.c.get("/api/state").json()["tasks"]]
         self.assertNotIn(t["id"], ids)
+
+    def test_staff_cannot_change_tasks(self):
+        self.login("maria")
+        for r in (self.c.post("/api/tasks", json={"title": "x"}, headers=H),
+                  self.c.patch("/api/tasks/t02", json={"freq": "weekly"}, headers=H)):
+            self.assertEqual((r.status_code, r.json()["error"]), (403, "Only an owner can do that."))
 
     def test_user_admin(self):
         me = self.login("owen")
@@ -768,7 +807,7 @@ class ApiTest(unittest.TestCase):
             uvicorn_log.removeHandler(handler)
             app_log.handlers[:] = kept_handlers  # a leaked handler would print over the whole suite
             app_log.level = kept_level
-        self.assertIn("database ready at schema version 5", stream.getvalue())
+        self.assertIn("database ready at schema version 6", stream.getvalue())
 
     def test_nothing_is_borrowed_when_uvicorn_has_configured_no_logging(self):
         """setUp already started the app under the test client; the suite has to stay as quiet as it was."""

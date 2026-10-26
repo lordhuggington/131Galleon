@@ -176,6 +176,8 @@ class JobsTest(KindTest):
         self.refused(self.c.delete(f"/api/visits/2026-09-29/photos/{photo['id']}", headers=H))
         self.refused(self.c.post("/api/visits/2026-09-29/extras", json={"title": "x"}, headers=H), 403,
                      "Only an owner can do that.")
+        self.refused(self.c.delete(f"/api/visits/2026-09-29/extras/{eid}", headers=H), 403,
+                     "Only an owner can do that.")
         self.refused(self.c.post("/api/tasks", json={"title": "x"}, headers=H), 403, "Only an owner can do that.")
         self.refused(self.c.get("/api/users"), 403, "Only an owner can do that.")
 
