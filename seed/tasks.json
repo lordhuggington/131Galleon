@@ -2,7 +2,6 @@
  "t02": {
   "active": true,
   "area": "Kitchen",
-  "day": "any",
   "freq": "visit",
   "notes": "",
   "order": 2,
@@ -11,7 +10,6 @@
  "t03": {
   "active": true,
   "area": "Kitchen",
-  "day": "any",
   "freq": "visit",
   "notes": "",
   "order": 3,
@@ -20,7 +18,6 @@
  "t04": {
   "active": true,
   "area": "Kitchen",
-  "day": "any",
   "freq": "visit",
   "notes": "",
   "order": 4,
@@ -29,7 +26,6 @@
  "t05": {
   "active": true,
   "area": "Kitchen",
-  "day": "any",
   "freq": "visit",
   "notes": "",
   "order": 5,
@@ -38,7 +34,6 @@
  "t06": {
   "active": true,
   "area": "Kitchen",
-  "day": "any",
   "freq": "visit",
   "notes": "",
   "order": 6,
@@ -47,7 +42,6 @@
  "t07": {
   "active": true,
   "area": "Kitchen",
-  "day": "any",
   "freq": "visit",
   "notes": "",
   "order": 7,
@@ -56,7 +50,6 @@
  "t08": {
   "active": true,
   "area": "Kitchen",
-  "day": "any",
   "freq": "visit",
   "notes": "",
   "order": 8,
@@ -65,7 +58,6 @@
  "t09": {
   "active": true,
   "area": "Kitchen",
-  "day": "any",
   "freq": "visit",
   "notes": "",
   "order": 9,
@@ -74,7 +66,6 @@
  "t10": {
   "active": true,
   "area": "Kitchen",
-  "day": "any",
   "freq": "visit",
   "notes": "",
   "order": 10,
@@ -83,7 +74,6 @@
  "t11": {
   "active": true,
   "area": "Kitchen",
-  "day": "tue",
   "freq": "monthly",
   "notes": "",
   "order": 11,
@@ -92,7 +82,6 @@
  "t12": {
   "active": true,
   "area": "Kitchen",
-  "day": "any",
   "freq": "monthly",
   "notes": "",
   "order": 12,
@@ -101,7 +90,6 @@
  "t13": {
   "active": true,
   "area": "Kitchen",
-  "day": "any",
   "freq": "monthly",
   "notes": "",
   "order": 13,
@@ -110,7 +98,6 @@
  "t14": {
   "active": true,
   "area": "Bathrooms",
-  "day": "any",
   "freq": "visit",
   "notes": "",
   "order": 14,
@@ -119,7 +106,6 @@
  "t15": {
   "active": true,
   "area": "Bathrooms",
-  "day": "any",
   "freq": "visit",
   "notes": "",
   "order": 15,
@@ -128,7 +114,6 @@
  "t16": {
   "active": true,
   "area": "Bathrooms",
-  "day": "any",
   "freq": "visit",
   "notes": "",
   "order": 16,
@@ -137,7 +122,6 @@
  "t17": {
   "active": true,
   "area": "Bathrooms",
-  "day": "any",
   "freq": "visit",
   "notes": "",
   "order": 17,
@@ -146,7 +130,6 @@
  "t18": {
   "active": true,
   "area": "Bathrooms",
-  "day": "any",
   "freq": "visit",
   "notes": "Add anything running low to the notes for Owen.",
   "order": 18,
@@ -155,7 +138,6 @@
  "t19": {
   "active": true,
   "area": "Bathrooms",
-  "day": "any",
   "freq": "visit",
   "notes": "",
   "order": 19,
@@ -164,7 +146,6 @@
  "t20": {
   "active": true,
   "area": "Bathrooms",
-  "day": "any",
   "freq": "monthly",
   "notes": "",
   "order": 20,
@@ -173,7 +154,6 @@
  "t21": {
   "active": true,
   "area": "Bedrooms",
-  "day": "any",
   "freq": "visit",
   "notes": "",
   "order": 21,
@@ -182,7 +162,6 @@
  "t22": {
   "active": true,
   "area": "Bedrooms",
-  "day": "fri",
   "freq": "weekly",
   "notes": "",
   "order": 22,
@@ -191,7 +170,6 @@
  "t23": {
   "active": true,
   "area": "Bedrooms",
-  "day": "any",
   "freq": "visit",
   "notes": "",
   "order": 23,
@@ -200,7 +178,6 @@
  "t24": {
   "active": true,
   "area": "Bedrooms",
-  "day": "any",
   "freq": "visit",
   "notes": "",
   "order": 24,
@@ -209,7 +186,6 @@
  "t25": {
   "active": true,
   "area": "Bedrooms",
-  "day": "any",
   "freq": "monthly",
   "notes": "",
   "order": 25,
@@ -218,7 +194,6 @@
  "t26": {
   "active": true,
   "area": "Living areas",
-  "day": "any",
   "freq": "visit",
   "notes": "",
   "order": 26,
@@ -227,7 +202,6 @@
  "t27": {
   "active": true,
   "area": "Living areas",
-  "day": "any",
   "freq": "visit",
   "notes": "",
   "order": 27,
@@ -236,7 +210,6 @@
  "t28": {
   "active": true,
   "area": "Living areas",
-  "day": "any",
   "freq": "visit",
   "notes": "",
   "order": 28,
@@ -245,7 +218,6 @@
  "t29": {
   "active": true,
   "area": "Living areas",
-  "day": "fri",
   "freq": "weekly",
   "notes": "",
   "order": 29,
@@ -254,7 +226,6 @@
  "t30": {
   "active": true,
   "area": "Living areas",
-  "day": "any",
   "freq": "monthly",
   "notes": "",
   "order": 30,
@@ -263,7 +234,6 @@
  "t31": {
   "active": true,
   "area": "Living areas",
-  "day": "any",
   "freq": "monthly",
   "notes": "",
   "order": 31,
@@ -272,7 +242,6 @@
  "t32": {
   "active": true,
   "area": "Laundry",
-  "day": "any",
   "freq": "visit",
   "notes": "",
   "order": 32,
@@ -281,7 +250,6 @@
  "t34": {
   "active": true,
   "area": "Laundry",
-  "day": "tue",
   "freq": "weekly",
   "notes": "",
   "order": 34,
@@ -290,7 +258,6 @@
  "t35": {
   "active": true,
   "area": "Laundry",
-  "day": "any",
   "freq": "monthly",
   "notes": "",
   "order": 35,
@@ -299,7 +266,6 @@
  "t36": {
   "active": true,
   "area": "Outdoor",
-  "day": "fri",
   "freq": "weekly",
   "notes": "",
   "order": 36,
@@ -308,7 +274,6 @@
  "t37": {
   "active": true,
   "area": "Outdoor",
-  "day": "fri",
   "freq": "weekly",
   "notes": "",
   "order": 37,
@@ -317,7 +282,6 @@
  "t38": {
   "active": true,
   "area": "Outdoor",
-  "day": "fri",
   "freq": "weekly",
   "notes": "",
   "order": 38,
@@ -326,7 +290,6 @@
  "t39": {
   "active": true,
   "area": "Spare rooms",
-  "day": "any",
   "freq": "monthly",
   "notes": "",
   "order": 39,
@@ -335,7 +298,6 @@
  "t40": {
   "active": true,
   "area": "Spare rooms",
-  "day": "any",
   "freq": "monthly",
   "notes": "",
   "order": 40,
@@ -344,7 +306,6 @@
  "t41": {
   "active": true,
   "area": "Whole house",
-  "day": "any",
   "freq": "visit",
   "notes": "",
   "order": 41,
@@ -353,7 +314,6 @@
  "t42": {
   "active": true,
   "area": "Whole house",
-  "day": "any",
   "freq": "fortnightly",
   "notes": "",
   "order": 42,

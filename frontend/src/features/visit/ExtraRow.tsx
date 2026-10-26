@@ -6,11 +6,15 @@ import { useApp } from "../../state/AppState";
 
 export function ExtraRow({
   date,
+  storedOn,
   extraId,
   extra,
   canRemove,
 }: {
+  /** The run sheet's date: ticking files the extra under it. */
   date: string;
+  /** Where the extra is stored now (see lib/visits). */
+  storedOn: string;
   extraId: string;
   extra: Extra;
   canRemove: boolean;
@@ -19,13 +23,13 @@ export function ExtraRow({
 
   function toggle() {
     const next = !extra.done;
-    dispatch({ type: "toggle-extra", date, extraId, done: next });
+    dispatch({ type: "toggle-extra", storedOn, date, extraId, done: next });
     void mutate("PATCH", `/api/visits/${date}/extras/${encodeURIComponent(extraId)}`, { done: next }).catch(() => {});
   }
 
   function remove() {
-    dispatch({ type: "remove-extra", date, extraId });
-    void mutate("DELETE", `/api/visits/${date}/extras/${encodeURIComponent(extraId)}`).catch(() => {});
+    dispatch({ type: "remove-extra", storedOn, extraId });
+    void mutate("DELETE", `/api/visits/${storedOn}/extras/${encodeURIComponent(extraId)}`).catch(() => {});
   }
 
   return (
@@ -36,7 +40,7 @@ export function ExtraRow({
         {extra.notes ? <div className="n">{extra.notes}</div> : null}
       </div>
       <div className="side">
-        <Pill variant="oat">Just this visit</Pill>
+        <Pill variant="oat">One-off</Pill>
         {canRemove ? (
           <button type="button" className="linkish" onClick={remove}>
             Remove

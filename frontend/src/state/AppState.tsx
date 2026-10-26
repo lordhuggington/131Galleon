@@ -6,7 +6,8 @@ import type {
   ClaimStatus, HoursClaim, Job, JobStatus, Me, StateResponse, Task, User, UsersResponse, Visit,
 } from "../api/types";
 import { TABS, isOwner, seesHours, seesJobs, seesVisit, type Tab } from "../lib/access";
-import { nextVisit, today } from "../lib/dates";
+import { today } from "../lib/dates";
+import { toggleExtra } from "../lib/visits";
 import { useToast } from "./useToast";
 
 export type { Tab } from "../lib/access";
@@ -17,7 +18,7 @@ export type Intent = "photo" | "note" | null;
 
 export interface UiState {
   tab: Tab;
-  /** Visit date on screen (a Tuesday or Friday). */
+  /** Visit date on screen: today, or a past date with something recorded on it. */
   date: string;
   /** Inline confirmation key, e.g. "del:t07", "pw:3", "photo:12", "job:4", "claim:9". */
   confirm: string | null;
@@ -55,7 +56,7 @@ export function initialAppData(): AppData {
     users: null,
     ui: {
       tab: tabFromHash() ?? "home",
-      date: nextVisit(today()),
+      date: today(),
       confirm: null,
       intent: null,
     },
@@ -73,8 +74,9 @@ export type Action =
   | { type: "date"; date: string }
   | { type: "confirm"; key: string | null }
   | { type: "toggle-task"; date: string; taskId: string; done: boolean }
-  | { type: "toggle-extra"; date: string; extraId: string; done: boolean }
-  | { type: "remove-extra"; date: string; extraId: string }
+  /** storedOn: the visits key the extra is under now; date: the run sheet it is ticked on. */
+  | { type: "toggle-extra"; storedOn: string; date: string; extraId: string; done: boolean }
+  | { type: "remove-extra"; storedOn: string; extraId: string }
   | { type: "visit-note"; date: string; note: string }
   | { type: "remove-photo"; date: string; photoId: number }
   | { type: "patch-task"; taskId: string; fields: Partial<Task> }
@@ -140,13 +142,9 @@ export function reduce(state: AppData, action: Action): AppData {
         return { ...visit, done };
       });
     case "toggle-extra":
-      return withVisit(state, action.date, (visit) => {
-        const existing = visit.extras[action.extraId];
-        if (!existing) return visit;
-        return { ...visit, extras: { ...visit.extras, [action.extraId]: { ...existing, done: action.done } } };
-      });
+      return { ...state, visits: toggleExtra(state.visits, action.storedOn, action.date, action.extraId, action.done) };
     case "remove-extra":
-      return withVisit(state, action.date, (visit) => {
+      return withVisit(state, action.storedOn, (visit) => {
         const extras = { ...visit.extras };
         delete extras[action.extraId];
         return { ...visit, extras };

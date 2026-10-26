@@ -25,26 +25,6 @@ export const today = (): string => iso(new Date());
 
 export const mondayOf = (s: string): string => addDays(s, -((dow(s) + 6) % 7));
 
-export const isVisitDay = (s: string): boolean => dow(s) === 2 || dow(s) === 5;
-
-export function nextVisit(from: string): string {
-  for (let i = 0; i < 7; i++) {
-    const d = addDays(from, i);
-    if (isVisitDay(d)) return d;
-  }
-  return from;
-}
-
-export function stepVisit(s: string, dir: 1 | -1): string {
-  for (let i = 1; i < 8; i++) {
-    const d = addDays(s, dir * i);
-    if (isVisitDay(d)) return d;
-  }
-  return s;
-}
-
-export const sessionOf = (s: string): "tue" | "fri" => (dow(s) === 2 ? "tue" : "fri");
-
 export const fmt = (s: string, opts: Intl.DateTimeFormatOptions): string =>
   parse(s).toLocaleDateString("en-US", opts);
 
