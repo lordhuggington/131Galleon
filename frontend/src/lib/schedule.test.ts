@@ -15,7 +15,6 @@ function task(over: Partial<Task> & { id: string }): Task {
     notes: over.notes ?? "",
     order: over.order ?? 0,
     active: over.active ?? true,
-    ...(over.link === undefined ? {} : { link: over.link }),
   };
 }
 
@@ -36,7 +35,7 @@ const NEXT_TUE = "2026-09-29";
 
 describe("constants", () => {
   it("orders areas the way the visit screen groups them", () => {
-    expect(AREA_ORDER[0]).toBe("Meal prep");
+    expect(AREA_ORDER[0]).toBe("Kitchen");
     expect(AREA_ORDER).toContain("Whole house");
     expect(AREA_ORDER.indexOf("Kitchen")).toBeLessThan(AREA_ORDER.indexOf("Outdoor"));
   });
@@ -151,23 +150,23 @@ describe("isDue", () => {
 
 describe("areaRank / sortTasks / groupByArea", () => {
   it("ranks known areas by AREA_ORDER and unknown areas last", () => {
-    expect(areaRank("Meal prep")).toBe(0);
+    expect(areaRank("Kitchen")).toBe(0);
     expect(areaRank("Garage")).toBe(100);
     expect(areaRank("Kitchen")).toBeLessThan(areaRank("Laundry"));
   });
 
   it("sorts by area order, then area name, then task order", () => {
     const sorted = sortTasks([
-      task({ id: "c", area: "Kitchen", order: 2 }),
-      task({ id: "a", area: "Meal prep", order: 9 }),
+      task({ id: "c", area: "Bathrooms", order: 2 }),
+      task({ id: "a", area: "Kitchen", order: 9 }),
       task({ id: "d", area: "Zoo", order: 1 }),
-      task({ id: "b", area: "Kitchen", order: 1 }),
+      task({ id: "b", area: "Bathrooms", order: 1 }),
     ]);
     expect(sorted.map((t) => t.id)).toEqual(["a", "b", "c", "d"]);
   });
 
   it("does not mutate the input array", () => {
-    const input = [task({ id: "b", area: "Kitchen" }), task({ id: "a", area: "Meal prep" })];
+    const input = [task({ id: "b", area: "Bathrooms" }), task({ id: "a", area: "Kitchen" })];
     sortTasks(input);
     expect(input.map((t) => t.id)).toEqual(["b", "a"]);
   });
@@ -175,14 +174,14 @@ describe("areaRank / sortTasks / groupByArea", () => {
   it("groups sorted tasks by area, keeping order, and labels blanks Other", () => {
     const groups = groupByArea(
       sortTasks([
-        task({ id: "a", area: "Meal prep" }),
+        task({ id: "a", area: "Kitchen" }),
         task({ id: "c", area: "" }),
-        task({ id: "b", area: "Kitchen" }),
+        task({ id: "b", area: "Bathrooms" }),
       ]),
     );
     expect(groups.map(([area, list]) => [area, list.map((t) => t.id)])).toEqual([
-      ["Meal prep", ["a"]],
-      ["Kitchen", ["b"]],
+      ["Kitchen", ["a"]],
+      ["Bathrooms", ["b"]],
       ["Other", ["c"]],
     ]);
   });
