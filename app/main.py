@@ -49,8 +49,19 @@ class SecurityHeaders:
                     (b"x-frame-options", b"DENY"),
                     (b"content-security-policy", CSP.encode()),
                 ]
+                has_cache_control = any(k.lower() == b"cache-control" for k, _ in headers)
+                content_type = next((v for k, v in headers if k.lower() == b"content-type"), b"")
                 if no_store:
                     headers.append((b"cache-control", b"no-store"))
+                elif has_cache_control:
+                    pass  # the handler chose (photos)
+                elif path.startswith("/assets/") and message["status"] == 200:
+                    # Vite puts a content hash in every asset name, so a file never changes under its name.
+                    headers.append((b"cache-control", b"public, max-age=31536000, immutable"))
+                elif content_type.startswith(b"text/html"):
+                    # The page names the current build's assets and a rebuild deletes the old ones, so a
+                    # stale copy loads nothing: browsers must check back every time (a 304 when unchanged).
+                    headers.append((b"cache-control", b"no-cache"))
                 message["headers"] = headers
             await send(message)
 
