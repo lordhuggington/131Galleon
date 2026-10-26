@@ -2,19 +2,17 @@ import { useActionState, useEffect, useMemo, useState } from "react";
 import { Button } from "../../components/Button";
 import { Card } from "../../components/Card";
 import { Pill } from "../../components/Pill";
-import { fmtLong, fmtShort, mondayOf, nextVisit, sessionOf, stepVisit, today } from "../../lib/dates";
+import { fmtLong, fmtShort, nextVisit, stepVisit, today } from "../../lib/dates";
 import { doneDatesByTask, groupByArea, isDue, lastDoneBefore, sortTasks } from "../../lib/schedule";
-import { useApp, useCanSeeMeals, useIsOwner, useSettings } from "../../state/AppState";
+import { useApp, useIsOwner } from "../../state/AppState";
 import { ExtraRow } from "./ExtraRow";
 import { PhotosCard } from "./PhotosCard";
 import { TaskRow } from "./TaskRow";
 import { VisitNote } from "./VisitNote";
 
 export function VisitScreen() {
-  const { state, dispatch, mutate, goToTab, showWeek } = useApp();
-  const settings = useSettings();
+  const { state, dispatch, mutate, goToTab } = useApp();
   const isOwner = useIsOwner();
-  const canSeeMeals = useCanSeeMeals();
   const { date, intent } = state.ui;
   const t0 = today();
   const next = nextVisit(t0);
@@ -35,7 +33,6 @@ export function VisitScreen() {
   const doneCount = due.filter((t) => done[t.id]).length + extras.filter(([, x]) => x.done).length;
   const percent = total ? Math.round((doneCount / total) * 100) : 0;
   const rel = date === t0 ? "Today" : date === next ? "Next visit" : date < t0 ? "Past visit" : "Coming up";
-  const session = sessionOf(date);
   const groups = groupByArea(due);
 
   const [extraTitle, setExtraTitle] = useState("");
@@ -56,11 +53,6 @@ export function VisitScreen() {
     if (intent !== null) dispatch({ type: "intent", intent: null });
   }, [intent, dispatch]);
 
-  function openMeals() {
-    goToTab("meals");
-    void showWeek(mondayOf(date));
-  }
-
   return (
     <div className="section">
       <Card>
@@ -77,7 +69,6 @@ export function VisitScreen() {
             <h2>{fmtLong(date)}</h2>
             <div className="visit-meta">
               <Pill variant={rel === "Today" || rel === "Next visit" ? "ok" : "default"}>{rel}</Pill>
-              <span className="small muted">Meal prep covers {settings[session].covers}</span>
             </div>
           </div>
           <button
@@ -174,8 +165,6 @@ export function VisitScreen() {
                 date={date}
                 done={Boolean(done[task.id])}
                 lastDone={lastDoneBefore(doneMap[task.id], date)}
-                showMealsLink={canSeeMeals}
-                onOpenMeals={openMeals}
               />
             ))}
           </div>

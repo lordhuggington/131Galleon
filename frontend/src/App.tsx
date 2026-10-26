@@ -1,28 +1,28 @@
-import { Activity, useEffect, useState } from "react";
+import { Activity, useEffect, useState, type ReactNode } from "react";
 import { api } from "./api/client";
 import type { LoginOptions, Me, MeResponse } from "./api/types";
 import { BottomNav, type NavItem } from "./components/BottomNav";
 import { LoginScreen } from "./features/auth/LoginScreen";
 import { HomeScreen } from "./features/home/HomeScreen";
-import { MealsScreen } from "./features/meals/MealsScreen";
+import { HoursScreen } from "./features/hours/HoursScreen";
+import { JobsScreen } from "./features/jobs/JobsScreen";
 import { SetupScreen } from "./features/setup/SetupScreen";
-import { ShoppingScreen } from "./features/shopping/ShoppingScreen";
 import { VisitScreen } from "./features/visit/VisitScreen";
+import { tabsFor } from "./lib/access";
 import { AppProvider, tabFromHash, useApp, type Tab } from "./state/AppState";
 import { usePolling } from "./state/usePolling";
 import { ToastProvider } from "./state/useToast";
 
+const NAV: Record<Tab, Omit<NavItem, "key">> = {
+  home: { icon: "🌊", label: "Home" },
+  visit: { icon: "✅", label: "Visit" },
+  jobs: { icon: "🔨", label: "Jobs" },
+  hours: { icon: "⏱️", label: "Hours" },
+  setup: { icon: "⚙️", label: "Setup" },
+};
+
 function navItemsFor(me: Me): NavItem[] {
-  const items: NavItem[] = [
-    { key: "home", icon: "🌊", label: "Home" },
-    { key: "visit", icon: "✅", label: "Visit" },
-  ];
-  if (me.role === "owner" || me.canSeeMeals) items.push({ key: "meals", icon: "🍳", label: "Meals" });
-  if (me.role === "owner") {
-    items.push({ key: "shopping", icon: "🛒", label: "Shopping" });
-    items.push({ key: "setup", icon: "⚙️", label: "Setup" });
-  }
-  return items;
+  return tabsFor(me).map((key) => ({ key, ...NAV[key] }));
 }
 
 function Shell() {
@@ -70,7 +70,7 @@ function Shell() {
   const items = me ? navItemsFor(me) : [];
   const allowed = items.some((item) => item.key === tab);
 
-  // A staff member landing on #setup (or losing Meals) goes Home.
+  // Someone landing on a tab that isn't theirs (a builder on #visit, staff on #setup) goes Home.
   useEffect(() => {
     if (me && !allowed) dispatch({ type: "tab", tab: "home" });
   }, [me, allowed, dispatch]);
@@ -94,34 +94,26 @@ function Shell() {
       </main>
     );
 
-  const isOwner = me.role === "owner";
-  const canSeeMeals = isOwner || me.canSeeMeals;
   const current: Tab = allowed ? tab : "home";
+  const mine = new Set(items.map((item) => item.key));
+  const screens: [Tab, ReactNode][] = [
+    ["home", <HomeScreen />],
+    ["visit", <VisitScreen />],
+    ["jobs", <JobsScreen />],
+    ["hours", <HoursScreen />],
+    ["setup", <SetupScreen />],
+  ];
 
   return (
     <>
       <main className="app">
-        <Activity mode={current === "home" ? "visible" : "hidden"}>
-          <HomeScreen />
-        </Activity>
-        <Activity mode={current === "visit" ? "visible" : "hidden"}>
-          <VisitScreen />
-        </Activity>
-        {canSeeMeals ? (
-          <Activity mode={current === "meals" ? "visible" : "hidden"}>
-            <MealsScreen />
-          </Activity>
-        ) : null}
-        {isOwner ? (
-          <Activity mode={current === "shopping" ? "visible" : "hidden"}>
-            <ShoppingScreen />
-          </Activity>
-        ) : null}
-        {isOwner ? (
-          <Activity mode={current === "setup" ? "visible" : "hidden"}>
-            <SetupScreen />
-          </Activity>
-        ) : null}
+        {screens.map(([key, screen]) =>
+          mine.has(key) ? (
+            <Activity key={key} mode={current === key ? "visible" : "hidden"}>
+              {screen}
+            </Activity>
+          ) : null,
+        )}
       </main>
       <BottomNav items={items} active={current} onSelect={(next) => goToTab(next)} />
     </>

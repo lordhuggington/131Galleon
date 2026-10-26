@@ -11,15 +11,11 @@ export function TaskRow({
   date,
   done,
   lastDone,
-  showMealsLink,
-  onOpenMeals,
 }: {
   task: Task;
   date: string;
   done: boolean;
   lastDone: string | null;
-  showMealsLink: boolean;
-  onOpenMeals: () => void;
 }) {
   const { dispatch, mutate } = useApp();
 
@@ -40,13 +36,6 @@ export function TaskRow({
       <div>
         <div className="t">{task.title}</div>
         {task.notes ? <div className="n">{task.notes}</div> : null}
-        {task.link === "meals" && showMealsLink ? (
-          <div>
-            <button type="button" className="linkish" onClick={onOpenMeals}>
-              Open this visit's recipes
-            </button>
-          </div>
-        ) : null}
       </div>
       <div className="side">
         {recurring ? (

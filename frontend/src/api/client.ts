@@ -1,4 +1,4 @@
-import type { Photo, PhotoKind, PhotoResponse } from "./types";
+import type { JobPhoto, JobPhotoResponse, Photo, PhotoKind, PhotoResponse } from "./types";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -69,6 +69,14 @@ export async function api<T>(method: Method, path: string, body?: unknown): Prom
   return (await send(method, path, init)) as T;
 }
 
+/** Raw-JPEG POST. X-HRS rides along here too: the CSRF guard covers the photo upload. */
+async function sendJpeg(path: string, blob: Blob): Promise<unknown> {
+  return send("POST", path, {
+    headers: { "X-HRS": "1", "Content-Type": "image/jpeg" },
+    body: blob,
+  });
+}
+
 /**
  * Raw-JPEG upload (spec §8.2): the body is the resized image itself, so the
  * server needs no multipart parser. kind and caption travel in the query string.
@@ -80,9 +88,13 @@ export async function uploadPhoto(
   caption: string,
 ): Promise<Photo> {
   const query = new URLSearchParams({ kind, caption }).toString();
-  const data = await send("POST", `/api/visits/${date}/photos?${query}`, {
-    headers: { "X-HRS": "1", "Content-Type": "image/jpeg" },
-    body: blob,
-  });
+  const data = await sendJpeg(`/api/visits/${date}/photos?${query}`, blob);
   return (data as PhotoResponse).photo;
+}
+
+/** Same raw-JPEG upload for a builder job; only the caption travels in the query string. */
+export async function uploadJobPhoto(jobId: number, blob: Blob, caption: string): Promise<JobPhoto> {
+  const query = new URLSearchParams({ caption }).toString();
+  const data = await sendJpeg(`/api/jobs/${jobId}/photos?${query}`, blob);
+  return (data as JobPhotoResponse).photo;
 }
