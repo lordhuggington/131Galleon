@@ -21,11 +21,12 @@ export const FREQ_LABEL: Record<Freq, string> = {
   monthly: "Monthly",
 };
 
-/** Minimum days since the last completion before a task is due again. */
+/** Minimum days since the last completion before a task is due again. Visits are weekly on no fixed
+ * day, so a Friday visit can be followed by a Tuesday one: the gaps leave room for that drift. */
 export const FREQ_GAP: Partial<Record<Freq, number>> = {
-  weekly: 5,
-  fortnightly: 12,
-  monthly: 26,
+  weekly: 4,
+  fortnightly: 10,
+  monthly: 24,
 };
 
 /** taskId -> ascending list of dates it was ticked. */

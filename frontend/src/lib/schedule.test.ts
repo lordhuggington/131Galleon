@@ -41,10 +41,10 @@ describe("constants", () => {
     expect(AREA_ORDER.indexOf("Kitchen")).toBeLessThan(AREA_ORDER.indexOf("Outdoor"));
   });
 
-  it("keeps the v1 frequency gaps", () => {
-    expect(FREQ_GAP.weekly).toBe(5);
-    expect(FREQ_GAP.fortnightly).toBe(12);
-    expect(FREQ_GAP.monthly).toBe(26);
+  it("leaves room for weekly visits on any day", () => {
+    expect(FREQ_GAP.weekly).toBe(4);
+    expect(FREQ_GAP.fortnightly).toBe(10);
+    expect(FREQ_GAP.monthly).toBe(24);
     expect(FREQ_GAP.visit).toBeUndefined();
   });
 
@@ -97,23 +97,23 @@ describe("isDue", () => {
     const t = task({ id: "t1", freq: "weekly" });
     const visits = visitsWith({ [TUE]: ["t1"], [FRI]: ["t1"] });
     const doneMap = doneDatesByTask(visits);
-    // Last done 3 days ago (< the 5-day weekly gap) but ticked today, so it stays on the list.
+    // Last done 3 days ago (< the 4-day weekly gap) but ticked today, so it stays on the list.
     expect(isDue(t, FRI, doneMap, visits)).toBe(true);
   });
 
-  it("holds a weekly task back for 5 days whatever the weekday", () => {
+  it("holds a weekly task back for 4 days whatever the weekday", () => {
     const t = task({ id: "t1", freq: "weekly" });
     const visits = visitsWith({ "2026-09-21": ["t1"] }); // a Monday
     const doneMap = doneDatesByTask(visits);
-    expect(isDue(t, "2026-09-25", doneMap, visits)).toBe(false); // 4 days on
-    expect(isDue(t, "2026-09-26", doneMap, visits)).toBe(true); // 5 days on, a Saturday
+    expect(isDue(t, "2026-09-24", doneMap, visits)).toBe(false); // 3 days on
+    expect(isDue(t, "2026-09-25", doneMap, visits)).toBe(true); // 4 days on: Monday, then Friday
   });
 
   it("shows a never-done recurring task the first time", () => {
     expect(isDue(task({ id: "t1", freq: "monthly" }), TUE, {}, noVisits)).toBe(true);
   });
 
-  it("applies the weekly gap of 5 days", () => {
+  it("applies the weekly gap of 4 days", () => {
     const t = task({ id: "t1", freq: "weekly" });
     const visits = visitsWith({ [TUE]: ["t1"] });
     const doneMap = doneDatesByTask(visits);
@@ -121,20 +121,20 @@ describe("isDue", () => {
     expect(isDue(t, NEXT_TUE, doneMap, visits)).toBe(true);
   });
 
-  it("applies the fortnightly gap of 12 days", () => {
+  it("applies the fortnightly gap of 10 days", () => {
     const t = task({ id: "t1", freq: "fortnightly" });
     const visits = visitsWith({ [TUE]: ["t1"] });
     const doneMap = doneDatesByTask(visits);
-    expect(isDue(t, "2026-10-02", doneMap, visits)).toBe(false);
-    expect(isDue(t, "2026-10-06", doneMap, visits)).toBe(true);
+    expect(isDue(t, "2026-10-01", doneMap, visits)).toBe(false);
+    expect(isDue(t, "2026-10-02", doneMap, visits)).toBe(true);
   });
 
-  it("applies the monthly gap of 26 days", () => {
+  it("applies the monthly gap of 24 days", () => {
     const t = task({ id: "t1", freq: "monthly" });
     const visits = visitsWith({ [TUE]: ["t1"] });
     const doneMap = doneDatesByTask(visits);
-    expect(isDue(t, "2026-10-13", doneMap, visits)).toBe(false);
-    expect(isDue(t, "2026-10-20", doneMap, visits)).toBe(true);
+    expect(isDue(t, "2026-10-15", doneMap, visits)).toBe(false);
+    expect(isDue(t, "2026-10-16", doneMap, visits)).toBe(true);
   });
 });
 
