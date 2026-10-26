@@ -1,17 +1,7 @@
 {
- "t01": {
-  "active": true,
-  "area": "Meal prep",
-  "day": "any",
-  "freq": "visit",
-  "link": "meals",
-  "notes": "Recipes, portions and prep order are on the Meals tab.",
-  "order": 1,
-  "title": "Cook this visit's meal prep"
- },
  "t02": {
   "active": true,
-  "area": "Meal prep",
+  "area": "Kitchen",
   "day": "any",
   "freq": "visit",
   "notes": "",
@@ -20,7 +10,7 @@
  },
  "t03": {
   "active": true,
-  "area": "Meal prep",
+  "area": "Kitchen",
   "day": "any",
   "freq": "visit",
   "notes": "",
@@ -95,7 +85,7 @@
   "area": "Kitchen",
   "day": "tue",
   "freq": "monthly",
-  "notes": "Do it before the meal prep goes in.",
+  "notes": "",
   "order": 11,
   "title": "Deep clean fridge shelves and drawers"
  },

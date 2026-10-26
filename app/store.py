@@ -1,58 +1,16 @@
-"""Data access for tasks, visits, settings and meal plans."""
+"""Data access for tasks, visits, jobs and hours claims."""
 from __future__ import annotations
 
-import json
 import sqlite3
 from datetime import date, timedelta
 
 from .db import now_iso
 
-DEFAULT_SETTINGS = {
-    "kcal": 500, "protein": 50,
-    "tue": {"breakfast": 3, "main": 9, "dessert": 3, "covers": "Wed, Thu, Fri"},
-    "fri": {"breakfast": 4, "main": 12, "dessert": 4, "covers": "Sat, Sun, Mon, Tue"},
-    "store": "", "likes": "", "dislikes": "", "pantry": "",
-}
-
-
-# ---------- settings ----------
-def default_settings() -> dict:
-    """A fresh copy of the defaults, nested sessions included. What someone who can't see meals gets."""
-    return {**DEFAULT_SETTINGS, "tue": dict(DEFAULT_SETTINGS["tue"]), "fri": dict(DEFAULT_SETTINGS["fri"])}
-
-
-def get_settings(conn: sqlite3.Connection) -> dict:
-    row = conn.execute("SELECT value FROM settings WHERE key = 'meal'").fetchone()
-    s = json.loads(row["value"]) if row else {}
-    out = default_settings()
-    sessions = {k: {**out[k], **(s.get(k) or {})} for k in ("tue", "fri")}
-    return {**out, **s, **sessions}
-
-
-def visible_settings(conn: sqlite3.Connection, can_see_meals: bool) -> dict:
-    """What /api/state may show this person: everything for owners and meals-enabled staff;
-    otherwise the defaults, except the prep-coverage days the Visit screen shows everyone."""
-    settings = get_settings(conn)
-    if can_see_meals:
-        return settings
-    shown = default_settings()
-    for session in ("tue", "fri"):
-        shown[session]["covers"] = settings[session]["covers"]
-    return shown
-
-
-def save_settings(conn: sqlite3.Connection, s: dict) -> None:
-    conn.execute("INSERT INTO settings (key, value) VALUES ('meal', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                 (json.dumps(s),))
-
 
 # ---------- tasks ----------
 def task_dict(r: sqlite3.Row) -> dict:
-    d = {"id": r["id"], "title": r["title"], "area": r["area"], "freq": r["freq"], "day": r["day"],
+    return {"id": r["id"], "title": r["title"], "area": r["area"], "freq": r["freq"], "day": r["day"],
          "notes": r["notes"], "order": r["sort_order"], "active": bool(r["active"])}
-    if r["link"]:
-        d["link"] = r["link"]
-    return d
 
 
 def list_tasks(conn: sqlite3.Connection) -> list[dict]:
@@ -62,12 +20,12 @@ def list_tasks(conn: sqlite3.Connection) -> list[dict]:
 def upsert_task(conn: sqlite3.Connection, tid: str, t: dict) -> None:
     now = now_iso()
     conn.execute(
-        """INSERT INTO tasks (id, title, area, freq, day, notes, link, active, sort_order, created_at, updated_at)
-           VALUES (:id, :title, :area, :freq, :day, :notes, :link, :active, :sort_order, :now, :now)
+        """INSERT INTO tasks (id, title, area, freq, day, notes, active, sort_order, created_at, updated_at)
+           VALUES (:id, :title, :area, :freq, :day, :notes, :active, :sort_order, :now, :now)
            ON CONFLICT(id) DO UPDATE SET title=excluded.title, area=excluded.area, freq=excluded.freq, day=excluded.day,
-             notes=excluded.notes, link=excluded.link, active=excluded.active, sort_order=excluded.sort_order, updated_at=excluded.updated_at""",
+             notes=excluded.notes, active=excluded.active, sort_order=excluded.sort_order, updated_at=excluded.updated_at""",
         {"id": tid, "title": t["title"], "area": t.get("area") or "Whole house", "freq": t.get("freq") or "visit",
-         "day": t.get("day") or "any", "notes": t.get("notes") or "", "link": t.get("link"),
+         "day": t.get("day") or "any", "notes": t.get("notes") or "",
          "active": 1 if t.get("active", True) else 0, "sort_order": int(t.get("order") or 0), "now": now},
     )
 
@@ -96,96 +54,92 @@ def list_visits(conn: sqlite3.Connection, days_back: int = 400) -> dict:
     return visits
 
 
-# ---------- meal plans ----------
-def save_plan(conn: sqlite3.Connection, week: str, plan: dict, source: str, note: str, user_id: int | None,
-              got: dict | None = None) -> None:
-    """Replace a week's menu and shopping list from a seed file. Call inside a transaction.
-
-    Only `python -m app.cli import-seed` uses this now: the seed JSON has a week-level "leftovers"
-    list and items marked for: "both". Leftovers move onto the week's last cook — Friday when it is
-    present, otherwise Tuesday — the same rule migration 004 applies, so importing the seed and
-    migrating an old database give the same shape.
-    """
-    sessions = {k: dict(v) for k, v in (plan.get("sessions") or {}).items() if isinstance(v, dict)}
-    last = "fri" if "fri" in sessions else "tue"
-    for k, sess in sessions.items():
-        sess["leftovers"] = list(sess.get("leftovers") or (plan.get("leftovers", []) if k == last else []))
-    data = {"sessions": sessions}
-    conn.execute("DELETE FROM meal_plans WHERE week = ?", (week,))  # cascades shopping_items
-    conn.execute("INSERT INTO meal_plans (week, data, source, note, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?)",
-                 (week, json.dumps(data), source, note, now_iso(), user_id))
-    got = got or {}
-    for n, i in enumerate(plan.get("shopping", [])):
-        conn.execute(
-            """INSERT INTO shopping_items (week, id, item, buy, aisle, for_session, stock, search, got, sort_order)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (week, i["id"], i["item"], i.get("buy", ""), i.get("aisle", "Pantry"), i.get("for", "both"),
-             1 if i.get("stock") else 0, i.get("search", ""), 1 if got.get(i["id"]) else 0, n),
-        )
+# ---------- jobs ----------
+def _person(uid: int | None, display_name: str | None) -> dict | None:
+    return None if uid is None else {"id": uid, "displayName": display_name or ""}
 
 
-def save_session(conn: sqlite3.Connection, week: str, session: str, session_data: dict, shopping: list[dict],
-                 user_id: int | None) -> None:
-    """Merge one prep session into a week. Call inside a transaction.
+def _author(r: sqlite3.Row) -> dict:
+    """Who wrote a comment or added a photo, with their role so the page can mark the owners' ones."""
+    return {"id": r["created_by"], "displayName": r["display_name"] or "", "role": r["author_role"]}
 
-    The week's other session, and its shopping ticks, are left exactly as they were: only this
-    session's meal_plans entry and its shopping_items rows are replaced. An existing row keeps its
-    original source, note and created_by — only data and created_at move. Rows marked for "both"
-    only exist in weeks planned before the connector; re-planning either session drops them, since
-    stale shared items on both lists is worse than the other session briefly missing them.
-    """
-    row = conn.execute("SELECT data FROM meal_plans WHERE week = ?", (week,)).fetchone()
-    if row is None:
-        data = {"sessions": {}}
-        conn.execute("INSERT INTO meal_plans (week, data, source, note, created_at, created_by) "
-                     "VALUES (?, ?, 'Claude', '', ?, ?)", (week, json.dumps(data), now_iso(), user_id))
+
+def comment_dict(r: sqlite3.Row) -> dict:
+    """r is a job_comments row joined to the author's display_name and role (as author_role)."""
+    return {"id": r["id"], "body": r["body"], "createdAt": r["created_at"], "by": _author(r)}
+
+
+def job_photo_dict(r: sqlite3.Row) -> dict:
+    """r is a job_photos row joined to the uploader's display_name and role (as author_role)."""
+    return {"id": r["id"], "caption": r["caption"], "url": f"/photos/{r['filename']}", "createdAt": r["created_at"],
+            "by": _author(r)}
+
+
+def list_jobs(conn: sqlite3.Connection, job_id: int | None = None) -> list[dict]:
+    """Active jobs in list order, each with its comments and photos oldest first. job_id narrows it to one."""
+    only = "AND j.id = :id" if job_id is not None else ""
+    params = {"id": job_id}
+    jobs: dict[int, dict] = {}
+    for r in conn.execute(f"""SELECT j.*, u.display_name AS done_by_name FROM jobs j
+                              LEFT JOIN users u ON u.id = j.done_by
+                              WHERE j.active = 1 {only} ORDER BY j.sort_order, j.id""", params):
+        jobs[r["id"]] = {"id": r["id"], "title": r["title"], "details": r["details"], "link": r["link"],
+                         "status": r["status"], "sortOrder": r["sort_order"], "createdAt": r["created_at"],
+                         "updatedAt": r["updated_at"], "doneAt": r["done_at"],
+                         "doneBy": _person(r["done_by"], r["done_by_name"]), "comments": [], "photos": []}
+    if not jobs:
+        return []
+    for r in conn.execute(f"""SELECT c.*, u.display_name, u.role AS author_role FROM job_comments c
+                              JOIN jobs j ON j.id = c.job_id
+                              LEFT JOIN users u ON u.id = c.created_by
+                              WHERE j.active = 1 {only} ORDER BY c.created_at, c.id""", params):
+        jobs[r["job_id"]]["comments"].append(comment_dict(r))
+    for r in conn.execute(f"""SELECT p.*, u.display_name, u.role AS author_role FROM job_photos p
+                              JOIN jobs j ON j.id = p.job_id
+                              LEFT JOIN users u ON u.id = p.created_by
+                              WHERE j.active = 1 {only} ORDER BY p.created_at, p.id""", params):
+        jobs[r["job_id"]]["photos"].append(job_photo_dict(r))
+    return list(jobs.values())
+
+
+def get_job(conn: sqlite3.Connection, job_id: int) -> dict | None:
+    found = list_jobs(conn, job_id)
+    return found[0] if found else None
+
+
+def add_job(conn: sqlite3.Connection, title: str, details: str, link: str, user_id: int | None) -> int:
+    """A new job goes to the end of the list. Returns its id."""
+    order = conn.execute("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM jobs").fetchone()[0]
+    now = now_iso()
+    cur = conn.execute("""INSERT INTO jobs (title, details, link, sort_order, created_at, created_by, updated_at)
+                          VALUES (?, ?, ?, ?, ?, ?, ?)""", (title, details, link, order, now, user_id, now))
+    return cur.lastrowid
+
+
+# ---------- hours claims ----------
+_CLAIM_SELECT = """SELECT h.*, u.display_name AS by_name, a.display_name AS approved_by_name,
+                          p.display_name AS paid_by_name
+                     FROM hours_claims h
+                     JOIN users u ON u.id = h.user_id
+                     LEFT JOIN users a ON a.id = h.approved_by
+                     LEFT JOIN users p ON p.id = h.paid_by"""
+
+
+def claim_dict(r: sqlite3.Row) -> dict:
+    return {"id": r["id"], "date": r["work_date"], "minutes": r["minutes"], "note": r["note"], "status": r["status"],
+            "createdAt": r["created_at"], "by": _person(r["user_id"], r["by_name"]),
+            "approvedAt": r["approved_at"], "approvedBy": _person(r["approved_by"], r["approved_by_name"]),
+            "paidAt": r["paid_at"], "paidBy": _person(r["paid_by"], r["paid_by_name"])}
+
+
+def list_claims(conn: sqlite3.Connection, user_id: int | None = None) -> list[dict]:
+    """Newest work day first. user_id=None means everyone's (owners); otherwise only that person's."""
+    if user_id is None:
+        rows = conn.execute(f"{_CLAIM_SELECT} ORDER BY h.work_date DESC, h.id DESC")
     else:
-        data = json.loads(row["data"])
-    data.setdefault("sessions", {})[session] = session_data
-    conn.execute("UPDATE meal_plans SET data = ?, created_at = ? WHERE week = ?",
-                 (json.dumps(data), now_iso(), week))
-    conn.execute("DELETE FROM shopping_items WHERE week = ? AND for_session IN (?, 'both')", (week, session))
-    for n, i in enumerate(shopping):
-        conn.execute(
-            """INSERT INTO shopping_items (week, id, item, buy, aisle, for_session, stock, search, got, sort_order)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)""",
-            (week, i["id"], i["item"], i["buy"], i["aisle"], session, 1 if i["stock"] else 0, i["search"], n),
-        )
+        rows = conn.execute(f"{_CLAIM_SELECT} WHERE h.user_id = ? ORDER BY h.work_date DESC, h.id DESC", (user_id,))
+    return [claim_dict(r) for r in rows]
 
 
-def get_plan(conn: sqlite3.Connection, week: str, include_shopping: bool) -> dict | None:
-    row = conn.execute("SELECT * FROM meal_plans WHERE week = ?", (week,)).fetchone()
-    if not row:
-        return None
-    data = json.loads(row["data"])
-    sessions = data.get("sessions") or {}
-    for sess in sessions.values():
-        # Leftovers belong to the session that produced them (migration 004). A row written before
-        # that still reads cleanly.
-        if isinstance(sess, dict):
-            sess.setdefault("leftovers", [])
-    plan = {"week": week, "source": row["source"], "note": row["note"], "createdAt": row["created_at"],
-            "sessions": sessions}
-    if include_shopping:
-        # sort_order is per session, so a week with both sessions saved has two rows for every position:
-        # id breaks the tie, or the list would shuffle between reads.
-        items = conn.execute("SELECT * FROM shopping_items WHERE week = ? ORDER BY sort_order, id",
-                             (week,)).fetchall()
-        plan["shopping"] = [{"id": r["id"], "item": r["item"], "buy": r["buy"], "aisle": r["aisle"],
-                             "for": r["for_session"], "stock": bool(r["stock"]), "search": r["search"]}
-                            for r in items]
-        plan["got"] = {r["id"]: True for r in items if r["got"]}
-    return plan
-
-
-def set_recipe_fav(conn: sqlite3.Connection, week: str, session: str, slot: str, fav: bool) -> bool:
-    row = conn.execute("SELECT data FROM meal_plans WHERE week = ?", (week,)).fetchone()
-    if not row:
-        return False
-    data = json.loads(row["data"])
-    try:
-        data["sessions"][session]["recipes"][slot]["fav"] = bool(fav)
-    except (KeyError, TypeError):
-        return False
-    conn.execute("UPDATE meal_plans SET data = ? WHERE week = ?", (json.dumps(data), week))
-    return True
+def get_claim(conn: sqlite3.Connection, claim_id: int) -> dict:
+    return claim_dict(conn.execute(f"{_CLAIM_SELECT} WHERE h.id = ?", (claim_id,)).fetchone())

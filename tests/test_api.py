@@ -16,7 +16,7 @@ JPEG = b"\xff\xd8\xff" + b"\x00" * 200  # only the magic bytes are checked serve
 PHOTO_HEADERS = {**H, "content-type": "image/jpeg"}
 # Every variable these tests set. Saved in setUp and restored in tearDown so the suite doesn't depend
 # on module order — the way tests/test_sms.py already does it.
-ENV_KEYS = ("HRS_DB_PATH", "HRS_PHOTOS_DIR", "HRS_COOKIE_SECURE", "HRS_PUBLIC_URL",
+ENV_KEYS = ("HRS_DB_PATH", "HRS_PHOTOS_DIR", "HRS_COOKIE_SECURE",
             "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_VERIFY_SERVICE_SID")
 
 
@@ -48,7 +48,6 @@ class ApiTest(unittest.TestCase):
         os.environ["HRS_DB_PATH"] = str(Path(self.tmp.name) / "test.db")
         os.environ["HRS_PHOTOS_DIR"] = str(Path(self.tmp.name) / "photos")
         os.environ["HRS_COOKIE_SECURE"] = "0"
-        os.environ["HRS_PUBLIC_URL"] = "http://testserver"  # the host starlette.testclient uses
         os.environ["TWILIO_ACCOUNT_SID"] = "AC123"
         os.environ["TWILIO_AUTH_TOKEN"] = "tok"
         os.environ["TWILIO_VERIFY_SERVICE_SID"] = "VA123"
@@ -130,7 +129,8 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(me["label"], "")
         self.assertIsNone(me["phone"])
         self.assertIsNone(me["doorCode"])
-        self.assertTrue(me["canSeeMeals"])
+        self.assertEqual(me["kind"], "housekeeper")
+        self.assertNotIn("canSeeMeals", me)
         self.assertEqual(self.c.get("/api/me").json()["me"], me)
         self.assertEqual(self.c.get("/api/state").json()["me"], me)
 
@@ -267,32 +267,35 @@ class ApiTest(unittest.TestCase):
         self.login("maria")
         state = self.c.get("/api/state").json()
         self.assertEqual(state["me"]["role"], "staff")
-        self.assertEqual(len(state["tasks"]), 41)
+        self.assertEqual(len(state["tasks"]), 40)
         self.assertEqual(self.c.post("/api/tasks", json={"title": "x"}, headers=H).status_code, 403)
         self.assertEqual(self.c.get("/api/users").status_code, 403)
-        self.assertEqual(self.c.get("/api/oauth/connections").status_code, 403)
         self.assertEqual(self.c.post("/api/visits/2026-09-29/extras", json={"title": "x"}, headers=H).status_code, 403)
-        plan = self.c.get("/api/plans/2026-09-28").json()["plan"]
-        self.assertIn("sessions", plan)
-        self.assertNotIn("shopping", plan)  # shopping list is owner-only
 
-    def test_menu_generation_is_gone(self):
-        """No route left, so the static mount at '/' answers: 405 for a POST it won't serve, 404 for the GET."""
+    def test_meal_prep_is_gone(self):
+        """No route left, so the static mount at '/' answers: 405 for anything but a GET, 404 for a GET."""
         self.login("owen")
-        self.assertEqual(self.c.post("/api/plans/2026-09-28/generate", json={}, headers=H).status_code, 405)
-        self.assertEqual(self.c.get("/api/jobs/1").status_code, 404)
+        self.assertEqual(self.c.get("/api/plans/2026-09-28").status_code, 404)
+        self.assertEqual(self.c.put("/api/settings", json={}, headers=H).status_code, 405)
+        self.assertEqual(self.c.get("/api/oauth/connections").status_code, 404)
+        self.assertEqual(self.c.post("/mcp", json={}, headers=H).status_code, 405)
+        self.assertEqual(self.c.get("/.well-known/oauth-authorization-server").status_code, 404)
+        state = self.c.get("/api/state").json()
+        self.assertNotIn("settings", state)
+        self.assertNotIn("Meal prep", {t["area"] for t in state["tasks"]})
+        self.assertNotIn("link", state["tasks"][0])
 
     def test_staff_ticks_and_notes(self):
         self.login("maria")
-        r = self.c.put("/api/visits/2026-09-29/tasks/t01", json={"done": True}, headers=H)
+        r = self.c.put("/api/visits/2026-09-29/tasks/t02", json={"done": True}, headers=H)
         self.assertEqual(r.status_code, 200)
         self.c.put("/api/visits/2026-09-29/note", json={"note": "Out of dish soap"}, headers=H)
         v = self.c.get("/api/state").json()["visits"]["2026-09-29"]
-        self.assertIn("t01", v["done"])
+        self.assertIn("t02", v["done"])
         self.assertEqual(v["note"], "Out of dish soap")
-        self.c.put("/api/visits/2026-09-29/tasks/t01", json={"done": False}, headers=H)
+        self.c.put("/api/visits/2026-09-29/tasks/t02", json={"done": False}, headers=H)
         v = self.c.get("/api/state").json()["visits"]["2026-09-29"]
-        self.assertNotIn("t01", v["done"])
+        self.assertNotIn("t02", v["done"])
 
     def test_extras_flow(self):
         self.login("owen")
@@ -315,50 +318,6 @@ class ApiTest(unittest.TestCase):
         ids = [x["id"] for x in self.c.get("/api/state").json()["tasks"]]
         self.assertNotIn(t["id"], ids)
 
-    def test_settings_validation(self):
-        self.login("owen")
-        s = self.c.get("/api/state").json()["settings"]
-        s["kcal"] = 99999
-        self.assertEqual(self.c.put("/api/settings", json=s, headers=H).status_code, 400)
-        s["kcal"] = 550
-        s["dislikes"] = "mushrooms"
-        r = self.c.put("/api/settings", json=s, headers=H)
-        self.assertEqual(r.status_code, 200, r.text)
-        self.assertEqual(r.json()["settings"]["dislikes"], "mushrooms")
-
-    def test_shopping_and_fav(self):
-        self.login("owen")
-        self.assertEqual(self.c.patch("/api/plans/2026-09-28/shopping/s01", json={"got": True}, headers=H).status_code, 200)
-        self.assertEqual(self.c.patch("/api/plans/2026-09-28/recipes/tue/main", json={"fav": True}, headers=H).status_code, 200)
-        plan = self.c.get("/api/plans/2026-09-28").json()["plan"]
-        self.assertTrue(plan["got"]["s01"])
-        self.assertTrue(plan["sessions"]["tue"]["recipes"]["main"]["fav"])
-        self.assertEqual(self.c.get("/api/plans/2026-09-29").status_code, 400)  # not a Monday
-
-    def test_the_seed_puts_its_leftovers_on_the_friday_session(self):
-        self.login("owen")
-        plan = self.c.get("/api/plans/2026-09-28").json()["plan"]
-        self.assertNotIn("leftovers", plan)  # never at the top of a plan any more
-        self.assertEqual(plan["sessions"]["tue"]["leftovers"], [])
-        self.assertIn("About 170 g Greek yogurt", plan["sessions"]["fri"]["leftovers"])
-
-    def test_shopping_search_phrase_survives_a_round_trip(self):
-        from app import store
-        from app.db import connect, tx
-        plan = {"sessions": {}, "leftovers": [], "shopping": [
-            {"id": "s01", "item": "Fage Total 0% Greek Yogurt, 32 oz", "buy": "2", "aisle": "Dairy & eggs",
-             "for": "both", "stock": False, "search": "Fage Total 0% Greek Yogurt 32 oz"},
-            {"id": "s02", "item": "Yellow onions", "buy": "3", "aisle": "Produce", "for": "tue", "stock": False}]}
-        conn = connect()
-        try:
-            with tx(conn):
-                store.save_plan(conn, "2026-10-12", plan, source="test", note="", user_id=None)
-            saved = store.get_plan(conn, "2026-10-12", include_shopping=True)
-        finally:
-            conn.close()
-        # the second item came without a phrase, the way every imported plan does
-        self.assertEqual([i["search"] for i in saved["shopping"]], ["Fage Total 0% Greek Yogurt 32 oz", ""])
-
     def test_user_admin(self):
         me = self.login("owen")
         r = self.c.post("/api/users", json={"username": "sam", "displayName": "Sam", "role": "staff", "password": "short"}, headers=H)
@@ -374,18 +333,23 @@ class ApiTest(unittest.TestCase):
     def test_create_person_fields_and_derived_username(self):
         self.login("owen")
         body = {"displayName": "Maria", "role": "staff", "label": "Builder", "phone": "(310) 555-7777",
-                "doorCode": "4821", "canSeeMeals": False}
+                "doorCode": "4821", "kind": "builder"}
         u = self.c.post("/api/users", json=body, headers=H).json()["user"]
         self.assertEqual(u["username"], "maria-2")  # 'maria' is taken by setUp
         self.assertEqual(u["label"], "Builder")
         self.assertEqual(u["phone"], "+13105557777")
         self.assertEqual(u["doorCode"], "4821")
-        self.assertFalse(u["canSeeMeals"])
+        self.assertEqual(u["kind"], "builder")
+        self.assertNotIn("canSeeMeals", u)
         self.assertFalse(u["hasPassword"])  # staff need no password
         self.assertTrue(u["active"])
         again = self.c.post("/api/users", json={"displayName": "Maria"}, headers=H).json()["user"]
         self.assertEqual(again["username"], "maria-3")
         self.assertEqual(again["role"], "staff")
+        self.assertEqual(again["kind"], "housekeeper")  # the default
+        r = self.c.post("/api/users", json={"displayName": "Pat", "kind": "plumber"}, headers=H)
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.json()["error"], "'kind' must be one of: housekeeper, builder.")
         # owners must have a password
         r = self.c.post("/api/users", json={"displayName": "Sam", "role": "owner"}, headers=H)
         self.assertEqual(r.status_code, 400)
@@ -393,7 +357,6 @@ class ApiTest(unittest.TestCase):
                         headers=H).json()["user"]
         self.assertEqual(o["username"], "sam")
         self.assertTrue(o["hasPassword"])
-        self.assertTrue(o["canSeeMeals"])
 
     def test_a_password_for_new_staff_with_a_phone_is_refused_not_dropped(self):
         """login() never accepts a password from staff who have a phone, so no hash may be stored —
@@ -524,7 +487,7 @@ class ApiTest(unittest.TestCase):
         pat_cookie = self.sms_login("(310) 555-1234")
         self.login("owen")  # Pat's session row is still live
         body = {"displayName": "Pat", "label": "Housekeeper", "phone": "+1 (310) 555-1234",
-                "doorCode": "4821", "canSeeMeals": True}
+                "doorCode": "4821", "kind": "housekeeper"}
         u = self.c.patch(f"/api/users/{pat['id']}", json=body, headers=H).json()["user"]
         self.assertEqual(u["label"], "Housekeeper")
         self.assertEqual(u["doorCode"], "4821")
@@ -616,57 +579,16 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(state.json()["me"]["doorCode"], "4821")
         self.assertNotIn("99887766", state.text)  # never anyone else's code
 
-    def test_owner_sees_meals_whatever_the_column_says(self):
-        """me_dict forces canSeeMeals on for owners; user_dict reports the stored column as it is."""
-        me = self.login("owen")
-        u = self.c.patch(f"/api/users/{me['id']}", json={"canSeeMeals": False}, headers=H).json()["user"]
-        self.assertFalse(u["canSeeMeals"])  # the column really was turned off
-        self.assertTrue(self.c.get("/api/me").json()["me"]["canSeeMeals"])
-        self.assertTrue(self.c.get("/api/state").json()["me"]["canSeeMeals"])
-        row = [x for x in self.c.get("/api/users").json()["users"] if x["id"] == me["id"]][0]
-        self.assertFalse(row["canSeeMeals"])
-
-    def test_meals_can_be_turned_off_for_a_staff_member(self):
+    def test_kind_can_be_changed(self):
         self.login("owen")
         maria = [u for u in self.c.get("/api/users").json()["users"] if u["username"] == "maria"][0]
-        self.c.patch(f"/api/users/{maria['id']}", json={"canSeeMeals": False}, headers=H)
-        self.assertEqual(self.c.get("/api/plans/2026-09-28").status_code, 200)  # owners are never gated
+        self.assertEqual(maria["kind"], "housekeeper")
+        u = self.c.patch(f"/api/users/{maria['id']}", json={"kind": "builder"}, headers=H).json()["user"]
+        self.assertEqual(u["kind"], "builder")
+        r = self.c.patch(f"/api/users/{maria['id']}", json={"kind": "owner"}, headers=H)
+        self.assertEqual(r.status_code, 400)
         self.c.post("/api/logout", headers=H)
-        mine = self.login("maria")
-        self.assertFalse(mine["canSeeMeals"])
-        r = self.c.get("/api/plans/2026-09-28")
-        self.assertEqual(r.status_code, 403)
-        self.assertEqual(r.json()["error"], "Meals aren't turned on for you.")
-
-    def test_state_hides_the_meal_settings_from_a_gated_staff_member(self):
-        """/api/state must not leak what /api/plans refuses: gated people get the defaults, same shape —
-        except the prep-coverage days, which the Visit screen shows everyone."""
-        from app import store
-        self.login("owen")
-        s = self.c.get("/api/state").json()["settings"]
-        s["likes"] = "kimchi-pancakes"
-        s["tue"]["covers"] = "Thu, Fri"
-        s["fri"]["covers"] = "Sat, Sun, Mon"
-        self.assertEqual(self.c.put("/api/settings", json=s, headers=H).status_code, 200)
-        self.assertEqual(self.c.get("/api/state").json()["settings"]["likes"], "kimchi-pancakes")
-        maria = [u for u in self.c.get("/api/users").json()["users"] if u["username"] == "maria"][0]
-        self.c.patch(f"/api/users/{maria['id']}", json={"canSeeMeals": False}, headers=H)
-        self.c.post("/api/logout", headers=H)
-        self.login("maria")
-        state = self.c.get("/api/state")
-        gated = state.json()["settings"]
-        self.assertEqual(gated["tue"]["covers"], "Thu, Fri")  # the real days, not the hard-coded ones
-        self.assertEqual(gated["fri"]["covers"], "Sat, Sun, Mon")
-        expected = store.default_settings()
-        expected["tue"]["covers"], expected["fri"]["covers"] = "Thu, Fri", "Sat, Sun, Mon"
-        self.assertEqual(gated, expected)  # and nothing else of the household's
-        self.assertNotIn("kimchi-pancakes", state.text)
-        self.c.post("/api/logout", headers=H)
-        self.login("owen")
-        self.c.patch(f"/api/users/{maria['id']}", json={"canSeeMeals": True}, headers=H)
-        self.c.post("/api/logout", headers=H)
-        self.login("maria")
-        self.assertEqual(self.c.get("/api/state").json()["settings"]["likes"], "kimchi-pancakes")
+        self.assertEqual(self.login("maria")["kind"], "builder")
 
     # ---- photos ----
     def test_upload_photo_appears_in_state(self):
@@ -846,7 +768,7 @@ class ApiTest(unittest.TestCase):
             uvicorn_log.removeHandler(handler)
             app_log.handlers[:] = kept_handlers  # a leaked handler would print over the whole suite
             app_log.level = kept_level
-        self.assertIn("database ready at schema version 4", stream.getvalue())
+        self.assertIn("database ready at schema version 5", stream.getvalue())
 
     def test_nothing_is_borrowed_when_uvicorn_has_configured_no_logging(self):
         """setUp already started the app under the test client; the suite has to stay as quiet as it was."""
