@@ -1,8 +1,10 @@
 import { useMemo, useState } from "react";
 import { fmtShort, fmtWeekday, mondayOf, nextVisit, today } from "../../lib/dates";
+import { hoursLabel, minutesInWeek, summarise } from "../../lib/hours";
+import { countJobs } from "../../lib/jobs";
 import { doneDatesByTask, isDue, sortTasks } from "../../lib/schedule";
 import { SunsetBand } from "../../components/illustrations/SunsetBand";
-import { useApp, useCanSeeMeals, useIsOwner } from "../../state/AppState";
+import { useAccess, useApp } from "../../state/AppState";
 import { AccountPanel } from "../auth/AccountPanel";
 import { DoorCodeBanner } from "./DoorCodeBanner";
 import { Tile } from "./Tile";
@@ -17,17 +19,13 @@ interface TileSpec {
 
 export function HomeScreen() {
   const { state, goToTab, dispatch } = useApp();
-  const isOwner = useIsOwner();
-  const canSeeMeals = useCanSeeMeals();
+  const access = useAccess();
+  const isOwner = access.isOwner;
   const [accountOpen, setAccountOpen] = useState(false);
   const me = state.me;
 
   const t0 = today();
   const visitDate = nextVisit(t0);
-  // The next visit's week — the same week Meals opens on and refresh() loads for Home.
-  const week = mondayOf(visitDate);
-  const plan = state.plans[week] ?? null;
-  const planLoaded = state.planLoaded[week] === true;
   const visit = state.visits[visitDate];
 
   const readyCount = useMemo(() => {
@@ -46,55 +44,44 @@ export function HomeScreen() {
   const visitSubtitle = `${readyCount} ${readyCount === 1 ? "task" : "tasks"} ready${
     photoCount ? ` · ${photoCount} ${photoCount === 1 ? "photo" : "photos"}` : ""
   }`;
-  const mealsSubtitle = planLoaded && !plan ? "No menu yet" : "Menu & prep order";
-  const shoppingLeft = (plan?.shopping ?? []).filter((i) => !plan?.got?.[i.id]).length;
-  // Blank until the plan has been fetched once; "0 items left to get" would be a guess.
-  const shoppingSubtitle = !planLoaded
-    ? ""
-    : plan
-      ? `${shoppingLeft} ${shoppingLeft === 1 ? "item" : "items"} left to get`
-      : "No menu yet";
+  const counts = countJobs(state.jobs ?? []);
+  // Blank until /api/state has answered; "0 open" would be a guess.
+  const jobsSubtitle =
+    state.jobs === null
+      ? ""
+      : isOwner
+        ? `${counts.todo} open · ${counts.doing} in progress`
+        : `${counts.todo} to do · ${counts.doing} in progress`;
+  const claims = state.hours ?? [];
+  const toApprove = summarise(claims).toApproveCount;
+  const hoursSubtitle = state.hours === null ? "" : `${toApprove} to approve`;
+  const weekSubtitle = state.hours === null ? "" : `${hoursLabel(minutesInWeek(claims, mondayOf(t0)))} this week`;
 
   function openVisit(intent: "photo" | "note" | null) {
     dispatch({ type: "date", date: visitDate });
     goToTab("visit", intent);
   }
 
-  const tiles: TileSpec[] = [
-    { key: "visit", icon: "✅", title: visitTitle, subtitle: visitSubtitle, onClick: () => openVisit(null) },
-  ];
-  if (canSeeMeals) {
-    tiles.push({
-      key: "meals",
-      icon: "🍳",
-      title: "This week's meals",
-      subtitle: mealsSubtitle,
-      onClick: () => goToTab("meals"),
-    });
-  }
+  const visitTile: TileSpec = {
+    key: "visit", icon: "✅", title: visitTitle, subtitle: visitSubtitle, onClick: () => openVisit(null),
+  };
+  const jobsTile: TileSpec = {
+    key: "jobs", icon: "🔨", title: "Jobs", subtitle: jobsSubtitle, onClick: () => goToTab("jobs"),
+  };
+  const photoTile: TileSpec = {
+    key: "photo", icon: "📷", title: "Add a photo", subtitle: "Work done / needs fixing", onClick: () => openVisit("photo"),
+  };
+
+  const tiles: TileSpec[] = [];
   if (isOwner) {
-    tiles.push({
-      key: "shopping",
-      icon: "🛒",
-      title: "Shopping list",
-      subtitle: shoppingSubtitle,
-      onClick: () => goToTab("shopping"),
-    });
-    tiles.push({
-      key: "photo",
-      icon: "📷",
-      title: "Add a photo",
-      subtitle: "Work done / needs fixing",
-      onClick: () => openVisit("photo"),
-    });
+    tiles.push(visitTile, jobsTile);
+    tiles.push({ key: "hours", icon: "⏱️", title: "Hours", subtitle: hoursSubtitle, onClick: () => goToTab("hours") });
+    tiles.push(photoTile);
+  } else if (access.jobs) {
+    // A builder's Home is their jobs, then the door code and Account link below.
+    tiles.push(jobsTile);
   } else {
-    tiles.push({
-      key: "photo",
-      icon: "📷",
-      title: "Add a photo",
-      subtitle: "Work done / needs fixing",
-      onClick: () => openVisit("photo"),
-    });
+    tiles.push(visitTile, photoTile);
     tiles.push({
       key: "note",
       icon: "📝",
@@ -102,8 +89,9 @@ export function HomeScreen() {
       subtitle: "Running low? Broken?",
       onClick: () => openVisit("note"),
     });
+    tiles.push({ key: "hours", icon: "⏱️", title: "Log hours", subtitle: weekSubtitle, onClick: () => goToTab("hours") });
   }
-  // Spec §5.1: with an odd number of tiles (staff without Meals) the last one spans both columns.
+  // Spec §5.1: with an odd number of tiles (a builder's one) the last one spans both columns.
   const spanLast = tiles.length % 2 === 1;
 
   return (

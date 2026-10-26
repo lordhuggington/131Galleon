@@ -3,7 +3,6 @@ import type { Day, Freq, Task, Visit } from "../api/types";
 import { diffDays, dow } from "./dates";
 
 export const AREA_ORDER: string[] = [
-  "Meal prep",
   "Kitchen",
   "Bathrooms",
   "Bedrooms",

@@ -6,7 +6,7 @@ export const POLL_MS = 20000;
 export function usePolling(): void {
   const { state, refresh } = useApp();
   const signedIn = state.me !== null;
-  const { tab, week } = state.ui;
+  const { tab } = state.ui;
 
   // useEffectEvent keeps the latest refresh without re-running the effects below.
   const poll = useEffectEvent(() => {
@@ -28,8 +28,8 @@ export function usePolling(): void {
     };
   }, [signedIn]);
 
-  // Refresh when the scope changes: a new tab or week needs different data.
+  // Refresh when the scope changes: Setup and Jobs also load the people list for owners.
   useEffect(() => {
     if (signedIn) poll();
-  }, [signedIn, tab, week]);
+  }, [signedIn, tab]);
 }

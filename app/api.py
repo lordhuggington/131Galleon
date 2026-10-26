@@ -5,7 +5,6 @@ import contextlib
 import json
 import re
 import secrets
-import time
 from datetime import date
 from pathlib import Path
 from typing import Any, Callable
@@ -26,15 +25,16 @@ DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 CODE_RE = re.compile(r"^\d{4,10}$")
 USERNAME_RE = re.compile(r"^[a-z0-9._-]{2,64}$")
 DOOR_CODE_RE = re.compile(r"^[0-9]{4,8}$")  # ASCII only: a keypad has no Unicode digits
-FAMILY_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")  # oauth_tokens.family is secrets.token_urlsafe(16)
 FREQS = ("visit", "weekly", "fortnightly", "monthly")
 DAYS = ("any", "tue", "fri")
-SESSIONS = ("tue", "fri")
-SLOTS = ("breakfast", "main", "dessert")
+KINDS = ("housekeeper", "builder")
+JOB_STATUSES = ("todo", "doing", "done")
+CLAIM_STATUSES = ("submitted", "approved", "paid")
 PHOTO_KINDS = ("done", "fix")
 PHOTO_MAX_BYTES = 8 * 1024 * 1024
 PHOTO_NAME_RE = re.compile(r"^[0-9a-f]{32}\.jpg$")
 JPEG_MAGIC = b"\xff\xd8\xff"
+NOT_YOURS = "That isn't part of your run sheet."
 _DUMMY_HASH = hash_password(secrets.token_hex(16))  # equalises login timing for unknown usernames
 
 
@@ -48,9 +48,12 @@ def err(status: int, message: str) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=status)
 
 
-def endpoint(role: str | None = None, public: bool = False, raw_body: bool = False,
+def endpoint(role: str | None = None, kind: str | None = None, public: bool = False, raw_body: bool = False,
              max_bytes: int | None = None):
     """Wrap a sync handler(request, conn, user, body) with auth, CSRF header check, JSON parsing and errors.
+
+    role="owner" lets only owners through. kind="housekeeper" or kind="builder" lets owners through plus
+    staff of that kind: the visit run sheet is the housekeeper's, the job list the builder's.
 
     raw_body=True skips JSON parsing and passes the request body straight through as bytes (photo uploads).
     max_bytes caps a raw body before it is buffered: an oversized Content-Length is refused unread, and a
@@ -97,6 +100,8 @@ def endpoint(role: str | None = None, public: bool = False, raw_body: bool = Fal
                             return err(401, "Please sign in.")
                         if role and user["role"] != role:
                             return err(403, "Only an owner can do that.")
+                        if kind and user["role"] != "owner" and user["kind"] != kind:
+                            return err(403, NOT_YOURS)
                     result = fn(request, conn, user, body)
                     return result if isinstance(result, Response) else JSONResponse(result)
                 except ApiError as e:
@@ -156,18 +161,15 @@ def path_date(request: Request, key: str = "date") -> str:
     return v
 
 
-def path_week(request: Request) -> str:
-    w = path_date(request, "week")
-    if date.fromisoformat(w).weekday() != 0:
-        raise ApiError(400, "A week is identified by its Monday.")
-    return w
+def sees(u, kind: str) -> bool:
+    """Whether this person gets the housekeeper's or the builder's part of the app. Owners get both."""
+    return u["role"] == "owner" or u["kind"] == kind
 
 
 def me_dict(u) -> dict:
     """The signed-in person's own record. doorCode is only ever their own."""
     return {"id": u["id"], "username": u["username"], "displayName": u["display_name"], "role": u["role"],
-            "label": u["label"], "phone": u["phone"], "doorCode": u["door_code"],
-            "canSeeMeals": u["role"] == "owner" or bool(u["can_see_meals"])}
+            "label": u["label"], "kind": u["kind"], "phone": u["phone"], "doorCode": u["door_code"]}
 
 
 # ---------- auth ----------
@@ -285,12 +287,20 @@ def change_my_password(request, conn, user, body):
 # ---------- state (polled by the page) ----------
 @endpoint()
 def state(request, conn, user, _body):
-    # Someone who can't see meals gets the default settings, not the household's: same shape for the
-    # page to render, none of the kcal targets, likes, dislikes or pantry. The prep-coverage days are
-    # the exception — the Visit screen shows those to everyone, so they must be the real ones.
-    me = me_dict(user)
-    return {"me": me, "tasks": store.list_tasks(conn), "visits": store.list_visits(conn),
-            "settings": store.visible_settings(conn, me["canSeeMeals"])}
+    # Every key is always there, so the page has one shape to render; what isn't part of someone's run
+    # sheet comes back empty rather than missing. A builder gets no tasks or visits, a housekeeper no
+    # jobs, and a housekeeper sees only their own hours.
+    housekeeping, building = sees(user, "housekeeper"), sees(user, "builder")
+    hours: list[dict] = []
+    if user["role"] == "owner":
+        hours = store.list_claims(conn)
+    elif housekeeping:
+        hours = store.list_claims(conn, user["id"])
+    return {"me": me_dict(user),
+            "tasks": store.list_tasks(conn) if housekeeping else [],
+            "visits": store.list_visits(conn) if housekeeping else {},
+            "jobs": store.list_jobs(conn) if building else [],
+            "hours": hours}
 
 
 # ---------- tasks (owner) ----------
@@ -340,7 +350,7 @@ def delete_task(request, conn, user, _body):
 
 
 # ---------- visits ----------
-@endpoint()
+@endpoint(kind="housekeeper")
 def set_task_done(request, conn, user, body):
     d, tid = path_date(request), request.path_params["task_id"]
     done = boolean(body, "done")
@@ -354,7 +364,7 @@ def set_task_done(request, conn, user, body):
     return {"ok": True}
 
 
-@endpoint()
+@endpoint(kind="housekeeper")
 def set_visit_note(request, conn, user, body):
     d = path_date(request)
     note = s(body, "note", 4000)
@@ -380,7 +390,7 @@ def _extra_id(request) -> int:
         raise ApiError(404, "That job doesn't exist.")
 
 
-@endpoint()
+@endpoint(kind="housekeeper")
 def set_extra_done(request, conn, user, body):
     d, eid = path_date(request), _extra_id(request)
     done = boolean(body, "done")
@@ -403,28 +413,54 @@ def _photos_dir() -> Path:
     return Path(get_config().photos_dir)
 
 
+def _caption(request) -> str:
+    caption = (request.query_params.get("caption") or "").strip()
+    if len(caption) > 300:
+        raise ApiError(400, "'caption' is too long (max 300 characters).")
+    return caption
+
+
+def save_jpeg(body: bytes) -> str:
+    """Check an uploaded photo and write it under a fresh random name, which is returned.
+
+    Shared by visit photos, job photos and `cli add-job-photo`. The name is never derived from input.
+    """
+    if len(body) > PHOTO_MAX_BYTES:  # defence in depth: endpoint(max_bytes=…) already refused it unread
+        raise ApiError(413, "That photo is too large.")
+    if not body.startswith(JPEG_MAGIC):
+        raise ApiError(415, "Only JPEG photos are accepted.")
+    filename = secrets.token_hex(16) + ".jpg"
+    directory = _photos_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / filename).write_bytes(body)
+    return filename
+
+
+def unlink_photo(filename: str) -> None:
+    """Remove a photo's file once its row is gone.
+
+    The row is the source of truth: it's gone, so the photo is unreachable whatever happens to the
+    file. Re-check the stored name (a hand-edited row shouldn't be able to aim the unlink) and let an
+    unlink failure pass — the worst case is an orphaned file nothing can serve.
+    """
+    if PHOTO_NAME_RE.match(filename):
+        with contextlib.suppress(OSError):
+            (_photos_dir() / filename).unlink(missing_ok=True)
+
+
 def _photo_dict(r, display_name: str) -> dict:
     return {"id": r["id"], "kind": r["kind"], "caption": r["caption"], "url": f"/photos/{r['filename']}",
             "createdAt": r["created_at"], "by": {"id": r["created_by"], "displayName": display_name}}
 
 
-@endpoint(raw_body=True, max_bytes=PHOTO_MAX_BYTES)
+@endpoint(kind="housekeeper", raw_body=True, max_bytes=PHOTO_MAX_BYTES)
 def add_photo(request, conn, user, body):
     d = path_date(request)
     kind = request.query_params.get("kind", "done")
     if kind not in PHOTO_KINDS:
         raise ApiError(400, f"'kind' must be one of: {', '.join(PHOTO_KINDS)}.")
-    caption = (request.query_params.get("caption") or "").strip()
-    if len(caption) > 300:
-        raise ApiError(400, "'caption' is too long (max 300 characters).")
-    if len(body) > PHOTO_MAX_BYTES:  # defence in depth: endpoint(max_bytes=…) already refused it unread
-        raise ApiError(413, "That photo is too large.")
-    if not body.startswith(JPEG_MAGIC):
-        raise ApiError(415, "Only JPEG photos are accepted.")
-    filename = secrets.token_hex(16) + ".jpg"  # never derived from user input
-    directory = _photos_dir()
-    directory.mkdir(parents=True, exist_ok=True)
-    (directory / filename).write_bytes(body)
+    caption = _caption(request)
+    filename = save_jpeg(body)
     cur = conn.execute(
         """INSERT INTO visit_photos (visit_date, kind, caption, filename, bytes, created_at, created_by)
            VALUES (?, ?, ?, ?, ?, ?, ?)""", (d, kind, caption, filename, len(body), now_iso(), user["id"]))
@@ -434,12 +470,21 @@ def add_photo(request, conn, user, body):
 
 @endpoint()
 def get_photo(request, conn, user, _body):
-    """Served from outside /api/ so the no-store header doesn't apply; still needs the session cookie."""
+    """Served from outside /api/ so the no-store header doesn't apply; still needs the session cookie.
+
+    The name must be in visit_photos (owners and housekeepers) or job_photos (owners and builders)
+    before the disk is touched. Someone the photo isn't for gets the same 404 as a name that
+    doesn't exist, so a builder can't probe for visit photos or the other way round.
+    """
     name = request.path_params["filename"]
     missing = ApiError(404, "That photo doesn't exist.")
     if not PHOTO_NAME_RE.match(name):
         raise missing
-    if not conn.execute("SELECT 1 FROM visit_photos WHERE filename = ?", (name,)).fetchone():
+    allowed = (sees(user, "housekeeper")
+               and conn.execute("SELECT 1 FROM visit_photos WHERE filename = ?", (name,)).fetchone()) or \
+              (sees(user, "builder")
+               and conn.execute("SELECT 1 FROM job_photos WHERE filename = ?", (name,)).fetchone())
+    if not allowed:
         raise missing
     path = _photos_dir() / name
     if not path.is_file():
@@ -448,7 +493,7 @@ def get_photo(request, conn, user, _body):
                         headers={"Cache-Control": "private, max-age=604800, immutable"})
 
 
-@endpoint()
+@endpoint(kind="housekeeper")
 def delete_photo(request, conn, user, _body):
     d = path_date(request)
     try:
@@ -461,108 +506,251 @@ def delete_photo(request, conn, user, _body):
     if user["role"] != "owner" and row["created_by"] != user["id"]:
         raise ApiError(403, "You can only delete your own photos.")
     conn.execute("DELETE FROM visit_photos WHERE id = ?", (pid,))
-    # The row is the source of truth: it's gone, so the photo is unreachable whatever happens to the
-    # file. Re-check the stored name (a hand-edited row shouldn't be able to aim the unlink) and let an
-    # unlink failure pass — the worst case is an orphaned file nothing can serve.
-    if PHOTO_NAME_RE.match(row["filename"]):
-        with contextlib.suppress(OSError):
-            (_photos_dir() / row["filename"]).unlink(missing_ok=True)
+    unlink_photo(row["filename"])
     return {"ok": True}
 
 
-# ---------- settings ----------
+# ---------- jobs (owners and builders) ----------
+def _int_param(request, key: str, missing: str) -> int:
+    try:
+        return int(request.path_params[key])
+    except ValueError:
+        raise ApiError(404, missing)
+
+
+def _job_id(request) -> int:
+    return _int_param(request, "job_id", "That job doesn't exist.")
+
+
+def _active_job(conn, request) -> int:
+    """The id of an active job, or 404. A deleted job (active = 0) is gone as far as the API goes."""
+    jid = _job_id(request)
+    if not conn.execute("SELECT 1 FROM jobs WHERE id = ? AND active = 1", (jid,)).fetchone():
+        raise ApiError(404, "That job doesn't exist.")
+    return jid
+
+
+def job_link(body: dict) -> str:
+    link = s(body, "link", 500)
+    if link and not link.lower().startswith(("http://", "https://")):
+        raise ApiError(400, "A link has to start with http:// or https://.")
+    return link
+
+
+def _job_fields(body: dict, partial: bool) -> dict:
+    out = {}
+    if not partial or "title" in body:
+        out["title"] = s(body, "title", 200, required=True)
+    if not partial or "details" in body:
+        out["details"] = s(body, "details", 4000)
+    if not partial or "link" in body:
+        out["link"] = job_link(body)
+    return out
+
+
+@endpoint(kind="builder")
+def list_jobs(request, conn, user, _body):
+    return {"jobs": store.list_jobs(conn)}
+
+
 @endpoint(role="owner")
-def put_settings(request, conn, user, body):
-    out = {"kcal": num(body, "kcal", 200, 1500), "protein": num(body, "protein", 10, 150)}
-    for k in SESSIONS:
-        sess = body.get(k)
-        if not isinstance(sess, dict):
-            raise ApiError(400, f"'{k}' portions are missing.")
-        out[k] = {"breakfast": num(sess, "breakfast", 0, 30), "main": num(sess, "main", 0, 40),
-                  "dessert": num(sess, "dessert", 0, 30), "covers": s(sess, "covers", 80, required=True)}
-    for k in ("store", "likes", "dislikes", "pantry"):
-        out[k] = s(body, k, 1000)
-    store.save_settings(conn, out)
-    return {"settings": store.get_settings(conn)}
+def create_job(request, conn, user, body):
+    f = _job_fields(body, partial=False)
+    jid = store.add_job(conn, f["title"], f["details"], f["link"], user["id"])
+    return {"job": store.get_job(conn, jid)}
 
 
-# ---------- meal plans ----------
-@endpoint()
-def get_plan(request, conn, user, _body):
-    if user["role"] != "owner" and not user["can_see_meals"]:
-        raise ApiError(403, "Meals aren't turned on for you.")
-    return {"plan": store.get_plan(conn, path_week(request), include_shopping=user["role"] == "owner")}
-
-
-@endpoint(role="owner")
-def delete_plan(request, conn, user, _body):
-    conn.execute("DELETE FROM meal_plans WHERE week = ?", (path_week(request),))
-    return {"ok": True}
-
-
-@endpoint(role="owner")
-def set_fav(request, conn, user, body):
-    w = path_week(request)
-    sess, slot = request.path_params["session"], request.path_params["slot"]
-    if sess not in SESSIONS or slot not in SLOTS:
-        raise ApiError(404, "That recipe doesn't exist.")
+@endpoint(kind="builder")
+def update_job(request, conn, user, body):
+    jid = _active_job(conn, request)
+    if user["role"] != "owner" and set(body) - {"status"}:
+        raise ApiError(403, "Only an owner can do that.")  # the builder moves a job along; owners write it
+    f = _job_fields(body, partial=True)
+    if "sortOrder" in body:
+        f["sort_order"] = num(body, "sortOrder", 0, 1_000_000)
+    if "status" in body:
+        f["status"] = choice(body, "status", JOB_STATUSES)
+    if not f:
+        raise ApiError(400, "Nothing to change.")
+    now = now_iso()
     with tx(conn):
-        if not store.set_recipe_fav(conn, w, sess, slot, boolean(body, "fav")):
-            raise ApiError(404, "That recipe doesn't exist.")
-    return {"ok": True}
+        sets = ", ".join(f"{k} = :{k}" for k in f)
+        conn.execute(f"UPDATE jobs SET {sets}, updated_at = :now WHERE id = :id", {**f, "now": now, "id": jid})
+        if f.get("status") == "done":
+            # Re-sending done keeps who finished it and when.
+            conn.execute("UPDATE jobs SET done_at = ?, done_by = ? WHERE id = ? AND done_at IS NULL",
+                         (now, user["id"], jid))
+        elif "status" in f:
+            conn.execute("UPDATE jobs SET done_at = NULL, done_by = NULL WHERE id = ?", (jid,))
+    return {"job": store.get_job(conn, jid)}
 
 
 @endpoint(role="owner")
-def set_got(request, conn, user, body):
-    w = path_week(request)
-    cur = conn.execute("UPDATE shopping_items SET got = ? WHERE week = ? AND id = ?",
-                       (1 if boolean(body, "got") else 0, w, request.path_params["item_id"]))
+def delete_job(request, conn, user, _body):
+    jid = _job_id(request)
+    cur = conn.execute("UPDATE jobs SET active = 0, updated_at = ? WHERE id = ? AND active = 1", (now_iso(), jid))
     if cur.rowcount == 0:
-        raise ApiError(404, "That shopping item doesn't exist.")
+        raise ApiError(404, "That job doesn't exist.")
     return {"ok": True}
 
 
-# ---------- the Claude connector (owner) ----------
-@endpoint(role="owner")
-def list_connections(request, conn, user, _body):
-    """One entry per live grant chain. mcpUrl rides here so staff never see the connector URL."""
-    rows = conn.execute(
-        """SELECT t.family AS family, MIN(t.created_at) AS connected_at,
-                  MAX(t.last_used_at) AS last_used_at, MAX(c.client_name) AS client_name
-             FROM oauth_tokens t
-             LEFT JOIN oauth_clients c ON c.client_id = t.client_id
-            WHERE t.user_id = ?
-              AND t.family IN (SELECT family FROM oauth_tokens
-                                WHERE user_id = ? AND kind = 'refresh'
-                                  AND revoked_at IS NULL AND expires_at > ?)
-            GROUP BY t.family
-            ORDER BY connected_at DESC""",
-        (user["id"], user["id"], int(time.time()))).fetchall()
-    return {"connections": [{"family": r["family"], "clientName": r["client_name"] or "Claude",
-                             "connectedAt": r["connected_at"], "lastUsedAt": r["last_used_at"]}
-                            for r in rows],
-            "mcpUrl": f"{get_config().public_url}/mcp"}
+@endpoint(kind="builder")
+def add_job_comment(request, conn, user, body):
+    jid = _active_job(conn, request)
+    text = s(body, "body", 2000, required=True)
+    cur = conn.execute("INSERT INTO job_comments (job_id, body, created_at, created_by) VALUES (?, ?, ?, ?)",
+                       (jid, text, now_iso(), user["id"]))
+    row = conn.execute("""SELECT c.*, u.display_name, u.role AS author_role FROM job_comments c
+                          LEFT JOIN users u ON u.id = c.created_by WHERE c.id = ?""", (cur.lastrowid,)).fetchone()
+    return {"comment": store.comment_dict(row)}
 
 
-@endpoint(role="owner")
-def delete_connection(request, conn, user, _body):
-    family = request.path_params["family"]
-    missing = ApiError(404, "That connection doesn't exist.")
-    if not FAMILY_RE.match(family):
-        raise missing
-    if not conn.execute("SELECT 1 FROM oauth_tokens WHERE family = ? AND user_id = ?",
-                        (family, user["id"])).fetchone():
-        raise missing
-    conn.execute("UPDATE oauth_tokens SET revoked_at = ? WHERE family = ? AND user_id = ? AND revoked_at IS NULL",
-                 (now_iso(), family, user["id"]))
+@endpoint(kind="builder")
+def delete_job_comment(request, conn, user, _body):
+    jid = _active_job(conn, request)
+    cid = _int_param(request, "comment_id", "That comment doesn't exist.")
+    row = conn.execute("SELECT created_by FROM job_comments WHERE id = ? AND job_id = ?", (cid, jid)).fetchone()
+    if not row:
+        raise ApiError(404, "That comment doesn't exist.")
+    if user["role"] != "owner" and row["created_by"] != user["id"]:
+        raise ApiError(403, "You can only delete your own comments.")
+    conn.execute("DELETE FROM job_comments WHERE id = ?", (cid,))
+    return {"ok": True}
+
+
+@endpoint(kind="builder", raw_body=True, max_bytes=PHOTO_MAX_BYTES)
+def add_job_photo(request, conn, user, body):
+    jid = _active_job(conn, request)
+    caption = _caption(request)
+    filename = save_jpeg(body)
+    cur = conn.execute("""INSERT INTO job_photos (job_id, caption, filename, bytes, created_at, created_by)
+                          VALUES (?, ?, ?, ?, ?, ?)""", (jid, caption, filename, len(body), now_iso(), user["id"]))
+    row = conn.execute("""SELECT p.*, u.display_name, u.role AS author_role FROM job_photos p
+                          LEFT JOIN users u ON u.id = p.created_by WHERE p.id = ?""", (cur.lastrowid,)).fetchone()
+    return {"photo": store.job_photo_dict(row)}
+
+
+@endpoint(kind="builder")
+def delete_job_photo(request, conn, user, _body):
+    jid = _active_job(conn, request)
+    pid = _int_param(request, "photo_id", "That photo doesn't exist.")
+    row = conn.execute("SELECT created_by, filename FROM job_photos WHERE id = ? AND job_id = ?", (pid, jid)).fetchone()
+    if not row:
+        raise ApiError(404, "That photo doesn't exist.")
+    if user["role"] != "owner" and row["created_by"] != user["id"]:
+        raise ApiError(403, "You can only delete your own photos.")
+    conn.execute("DELETE FROM job_photos WHERE id = ?", (pid,))
+    unlink_photo(row["filename"])
+    return {"ok": True}
+
+
+# ---------- hours claims (housekeepers claim, owners approve and pay) ----------
+ALREADY_APPROVED = "That claim has already been approved."
+
+
+def _work_date(body: dict) -> str:
+    v = body.get("date")
+    if not isinstance(v, str) or not DATE_RE.match(v):
+        raise ApiError(400, "Dates must look like 2026-09-29.")
+    try:
+        d = date.fromisoformat(v)
+    except ValueError:
+        raise ApiError(400, "That date doesn't exist.")
+    if d > date.today():
+        raise ApiError(400, "You can't claim hours for a future day.")
+    return v
+
+
+def _minutes(body: dict) -> int:
+    v = body.get("minutes")
+    if isinstance(v, float) and v.is_integer():
+        v = int(v)
+    if isinstance(v, bool) or not isinstance(v, int) or not 15 <= v <= 960 or v % 15:
+        raise ApiError(400, "Hours go in quarter hours, from 0.25 to 16.")
+    return v
+
+
+def _claim_for(conn, request, user):
+    """The claim row, if this person may see it: owners any, a housekeeper only their own. Others 404."""
+    cid = _int_param(request, "claim_id", "That claim doesn't exist.")
+    row = conn.execute("SELECT * FROM hours_claims WHERE id = ?", (cid,)).fetchone()
+    if not row or (user["role"] != "owner" and row["user_id"] != user["id"]):
+        raise ApiError(404, "That claim doesn't exist.")
+    return row
+
+
+@endpoint(kind="housekeeper")
+def list_hours(request, conn, user, _body):
+    return {"claims": store.list_claims(conn, None if user["role"] == "owner" else user["id"])}
+
+
+@endpoint(kind="housekeeper")
+def create_claim(request, conn, user, body):
+    if user["role"] == "owner":
+        raise ApiError(403, "Only staff claim hours.")
+    work_date, minutes, note = _work_date(body), _minutes(body), s(body, "note", 500)
+    now = now_iso()
+    cur = conn.execute("""INSERT INTO hours_claims (user_id, work_date, minutes, note, created_at, updated_at)
+                          VALUES (?, ?, ?, ?, ?, ?)""", (user["id"], work_date, minutes, note, now, now))
+    return {"claim": store.get_claim(conn, cur.lastrowid)}
+
+
+@endpoint(kind="housekeeper")
+def update_claim(request, conn, user, body):
+    row = _claim_for(conn, request, user)
+    now = now_iso()
+    if user["role"] == "owner":
+        if set(body) & {"date", "minutes", "note"}:
+            raise ApiError(403, "Only the person who claimed the hours can change those.")
+        if "status" not in body:
+            raise ApiError(400, "Nothing to change.")
+        status = choice(body, "status", CLAIM_STATUSES)
+        # Each stamp says when the claim reached that step. Moving forward fills what's missing (paying a
+        # claim nobody approved approves it too); moving back clears the steps it undoes.
+        approved = (row["approved_at"] or now, row["approved_by"] or user["id"]) if status != "submitted" else (None, None)
+        paid = (row["paid_at"] or now, row["paid_by"] or user["id"]) if status == "paid" else (None, None)
+        conn.execute("""UPDATE hours_claims SET status = ?, approved_at = ?, approved_by = ?, paid_at = ?, paid_by = ?,
+                        updated_at = ? WHERE id = ?""", (status, *approved, *paid, now, row["id"]))
+        return {"claim": store.get_claim(conn, row["id"])}
+    if "status" in body:
+        raise ApiError(403, "Only an owner can do that.")
+    if row["status"] != "submitted":
+        raise ApiError(409, ALREADY_APPROVED)
+    f = {}
+    if "date" in body:
+        f["work_date"] = _work_date(body)
+    if "minutes" in body:
+        f["minutes"] = _minutes(body)
+    if "note" in body:
+        f["note"] = s(body, "note", 500)
+    if not f:
+        raise ApiError(400, "Nothing to change.")
+    sets = ", ".join(f"{k} = :{k}" for k in f)
+    # status = 'submitted' in the WHERE as well: an owner approving it in between wins.
+    cur = conn.execute(f"UPDATE hours_claims SET {sets}, updated_at = :now WHERE id = :id AND status = 'submitted'",
+                       {**f, "now": now, "id": row["id"]})
+    if cur.rowcount == 0:
+        raise ApiError(409, ALREADY_APPROVED)
+    return {"claim": store.get_claim(conn, row["id"])}
+
+
+@endpoint(kind="housekeeper")
+def delete_claim(request, conn, user, _body):
+    row = _claim_for(conn, request, user)
+    if user["role"] == "owner":
+        conn.execute("DELETE FROM hours_claims WHERE id = ?", (row["id"],))
+        return {"ok": True}
+    cur = conn.execute("DELETE FROM hours_claims WHERE id = ? AND status = 'submitted'", (row["id"],))
+    if cur.rowcount == 0:
+        raise ApiError(409, ALREADY_APPROVED)
     return {"ok": True}
 
 
 # ---------- people (owner) ----------
 def user_dict(r) -> dict:
     return {"id": r["id"], "username": r["username"], "displayName": r["display_name"], "role": r["role"],
-            "label": r["label"], "phone": r["phone"], "doorCode": r["door_code"],
-            "canSeeMeals": bool(r["can_see_meals"]), "active": bool(r["active"]),
+            "label": r["label"], "kind": r["kind"], "phone": r["phone"], "doorCode": r["door_code"],
+            "active": bool(r["active"]),
             "hasPassword": bool(r["password_hash"])}
 
 
@@ -613,7 +801,7 @@ def create_user(request, conn, user, body):
     label = s(body, "label", 40)
     phone = _phone_field(body, conn, None)
     door_code = _door_code_field(body)
-    can_see_meals = boolean(body, "canSeeMeals") if "canSeeMeals" in body else True
+    kind = choice(body, "kind", KINDS, "housekeeper")
     username = s(body, "username", 64).lower()
     if username:
         if not USERNAME_RE.match(username):
@@ -635,9 +823,9 @@ def create_user(request, conn, user, body):
             raise ApiError(400, problem)
         pw_hash = hash_password(password)
     cur = conn.execute(
-        """INSERT INTO users (username, display_name, role, label, phone, door_code, can_see_meals, password_hash, created_at)
+        """INSERT INTO users (username, display_name, role, label, kind, phone, door_code, password_hash, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (username, display, role, label, phone, door_code, 1 if can_see_meals else 0, pw_hash, now_iso()))
+        (username, display, role, label, kind, phone, door_code, pw_hash, now_iso()))
     return {"user": user_dict(conn.execute("SELECT * FROM users WHERE id = ?", (cur.lastrowid,)).fetchone())}
 
 
@@ -656,8 +844,8 @@ def update_user(request, conn, user, body):
             conn.execute("UPDATE users SET display_name = ? WHERE id = ?", (s(body, "displayName", 80, required=True), uid))
         if "label" in body:
             conn.execute("UPDATE users SET label = ? WHERE id = ?", (s(body, "label", 40), uid))
-        if "canSeeMeals" in body:
-            conn.execute("UPDATE users SET can_see_meals = ? WHERE id = ?", (1 if boolean(body, "canSeeMeals") else 0, uid))
+        if "kind" in body:
+            conn.execute("UPDATE users SET kind = ? WHERE id = ?", (choice(body, "kind", KINDS), uid))
         if "doorCode" in body:
             conn.execute("UPDATE users SET door_code = ? WHERE id = ?", (_door_code_field(body), uid))
         new_phone = target["phone"]
@@ -722,13 +910,18 @@ routes = [
     Route("/api/visits/{date}/extras/{extra_id}", delete_extra, methods=["DELETE"]),
     Route("/api/visits/{date}/photos", add_photo, methods=["POST"]),
     Route("/api/visits/{date}/photos/{photo_id}", delete_photo, methods=["DELETE"]),
-    Route("/api/settings", put_settings, methods=["PUT"]),
-    Route("/api/plans/{week}", get_plan),
-    Route("/api/plans/{week}", delete_plan, methods=["DELETE"]),
-    Route("/api/plans/{week}/recipes/{session}/{slot}", set_fav, methods=["PATCH"]),
-    Route("/api/plans/{week}/shopping/{item_id}", set_got, methods=["PATCH"]),
-    Route("/api/oauth/connections", list_connections),
-    Route("/api/oauth/connections/{family}", delete_connection, methods=["DELETE"]),
+    Route("/api/jobs", list_jobs),
+    Route("/api/jobs", create_job, methods=["POST"]),
+    Route("/api/jobs/{job_id}", update_job, methods=["PATCH"]),
+    Route("/api/jobs/{job_id}", delete_job, methods=["DELETE"]),
+    Route("/api/jobs/{job_id}/comments", add_job_comment, methods=["POST"]),
+    Route("/api/jobs/{job_id}/comments/{comment_id}", delete_job_comment, methods=["DELETE"]),
+    Route("/api/jobs/{job_id}/photos", add_job_photo, methods=["POST"]),
+    Route("/api/jobs/{job_id}/photos/{photo_id}", delete_job_photo, methods=["DELETE"]),
+    Route("/api/hours", list_hours),
+    Route("/api/hours", create_claim, methods=["POST"]),
+    Route("/api/hours/{claim_id}", update_claim, methods=["PATCH"]),
+    Route("/api/hours/{claim_id}", delete_claim, methods=["DELETE"]),
     Route("/api/users", list_users),
     Route("/api/users", create_user, methods=["POST"]),
     Route("/api/users/{user_id}", update_user, methods=["PATCH"]),

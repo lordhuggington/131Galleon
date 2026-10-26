@@ -50,7 +50,7 @@ button { cursor: pointer }
 .chip[aria-pressed="true"] { background: var(--teal); border-color: var(--teal); color: var(--on-accent) }
 
 /* inputs */
-input[type=text], input[type=tel], input[type=number], input[type=password], select, textarea {
+input[type=text], input[type=tel], input[type=number], input[type=password], input[type=date], input[type=url], select, textarea {
   background: var(--surface); border: 2px solid var(--line); border-radius: var(--r-sm); padding: 10px 12px; min-height: 44px; width: 100%
 }
 textarea { min-height: 88px; resize: vertical }
@@ -118,32 +118,6 @@ form.task { cursor: auto }
 .dlg::backdrop { background: var(--shadow-scrim) }
 .dlg img { display: block; max-height: 70vh; border-radius: var(--r-sm) }
 
-/* meals */
-.timeline { margin: 8px 0 0; padding-left: 22px; display: grid; gap: 4px }
-.recipe { background: var(--surface); border: 2px solid var(--line); border-radius: var(--r); padding: 18px }
-.recipe h3 { font-size: 22px; margin-top: 4px }
-.recipe .blurb { color: var(--muted); margin-top: 4px }
-.macros { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px }
-.recipe-body { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 24px; margin-top: 16px }
-@media (max-width: 680px) { .recipe-body { grid-template-columns: 1fr } }
-.ing { width: 100%; border-collapse: collapse; font-size: 14px }
-.ing td { padding: 6px 0; border-bottom: 2px solid var(--line); vertical-align: top }
-.ing td:last-child { text-align: right; padding-left: 10px; font-family: var(--mono); font-size: 12.5px; color: var(--muted) }
-.steps { margin: 0; padding-left: 22px; display: grid; gap: 8px }
-.store { margin-top: 14px; padding: 10px 12px; border-radius: var(--r-sm); background: var(--orange-soft); color: var(--ink); font-size: 14px }
-.store b { color: var(--rust) }
-.star { background: none; border: 2px solid var(--line); border-radius: 999px; padding: 6px 12px; font-size: 13px; font-weight: 700; color: var(--muted); min-height: 36px }
-.star[aria-pressed="true"] { color: var(--orange); border-color: var(--orange); background: var(--orange-soft) }
-
-/* shopping */
-.shop-item { display: grid; grid-template-columns: 34px 1fr auto; gap: 10px; align-items: center; padding: 10px 16px; border-top: 2px solid var(--line); cursor: pointer }
-.group-h + .shop-item { border-top: 0 }
-.shop-item.done .t { color: var(--muted); text-decoration: line-through }
-.shop-item .b { font-family: var(--mono); font-size: 12.5px; color: var(--muted); text-align: right }
-/* the Amazon Fresh search sits under the quantity so long item names keep their width */
-.shop-item .b .linkish { display: block; margin-top: 3px; font-family: var(--body); font-size: 12.5px }
-.copybox { width: 100%; min-height: 200px; font-family: var(--mono); font-size: 12.5px }
-
 /* setup */
 .trow { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 1.3fr) minmax(0, 1.2fr) minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 8px 12px; border-top: 2px solid var(--line) }
 .trow .notes { grid-column: 1 / -2 }
@@ -155,15 +129,50 @@ form.task { cursor: auto }
 .group-h + .urow { border-top: 0 }
 .urow .pill { justify-self: start }
 .uedit { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; padding: 12px 16px; border-top: 2px solid var(--line) }
-/* Setup → Claude: the connector URL row and the OAuth connections under it */
-.mcp-url { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; padding: 10px 12px; border: 2px solid var(--line); border-radius: var(--r-sm); background: var(--surface-2) }
-.mcp-url .mono { word-break: break-all; font-size: 13px }
-.conn { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 12px 16px; border-top: 2px solid var(--line) }
-.conn .t { font-weight: 600 }
-.group-h + .conn { border-top: 0 }
 .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px }
-.grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px }
 @media (max-width: 600px) { .urow { grid-template-columns: 1fr } }
+
+/* a field or row that spans every column of an auto-fit form grid (.uedit, .claim-form) */
+.span-all { grid-column: 1 / -1 }
+.screen-h { font-family: var(--display); font-weight: 400; color: var(--ink); font-size: 26px }
+
+/* jobs */
+.jobs { display: grid; gap: 10px }
+.job { background: var(--surface); border: 2px solid var(--line); border-radius: var(--r); overflow: hidden }
+.job-head { display: grid; grid-template-columns: 34px 1fr auto; gap: 10px; align-items: center; width: 100%; text-align: left; background: none; border: 0; padding: 12px 16px; min-height: 56px }
+.job-num { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; background: var(--surface-2); color: var(--rust); font-size: 13px; font-weight: 700 }
+.job-title { font-weight: 700 }
+.job.done .job-title { color: var(--muted) }
+.job.done .job-num { background: var(--teal-soft); color: var(--teal-deep) }
+.job-head[aria-expanded="true"] { background: var(--surface-2) }
+.job-side { display: flex; flex-direction: column; align-items: flex-end; gap: 4px }
+.job-body { display: grid; gap: 16px; padding: 14px 16px 16px; border-top: 2px solid var(--line) }
+/* Builder notes are plain text: keep their line breaks, never render them as HTML. */
+.job-details { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px }
+.job-form { display: grid; gap: 10px; margin-top: 12px; padding-top: 12px; border-top: 2px solid var(--line) }
+.job-body .job-form { margin-top: 0; padding-top: 0; border-top: 0 }
+.comments { display: grid; gap: 8px }
+.comment { display: grid; gap: 4px; padding: 10px 12px; border-radius: var(--r-sm); background: var(--surface-2); border-left: 4px solid var(--teal) }
+.comment.from-owner { background: var(--orange-soft); border-left-color: var(--orange) }
+.comment .t { font-weight: 700 }
+.comment-body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px }
+.comment-form { display: grid; gap: 8px }
+.comment-form textarea { min-height: 72px }
+
+/* hours */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px }
+.stat { font-size: 22px; font-weight: 500; color: var(--rust) }
+.claim-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-top: 14px; padding-top: 14px; border-top: 2px solid var(--line) }
+.claim-form.edit { margin-top: 0; padding-top: 0; border-top: 0 }
+.claim { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 10px; align-items: start; padding: 12px 16px; border-top: 2px solid var(--line) }
+.group-h + .claim, .week-people + .claim { border-top: 0 }
+.claim > .claim-form { grid-column: 1 / -1 }
+.claim .t { font-weight: 600 }
+.claim .n { font-size: 13px; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere }
+.claim-side { display: flex; flex-direction: column; align-items: flex-end; gap: 6px }
+.claim-hours { font-size: 15px; font-weight: 500 }
+.claim-actions { grid-column: 1 / -1 }
+.week-people { display: flex; align-items: center; gap: 6px 14px; flex-wrap: wrap; padding: 10px 16px; border-bottom: 2px solid var(--line) }
 
 /* toast sits above the bottom nav */
 .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(88px + env(safe-area-inset-bottom, 0px)); background: var(--ink); color: var(--on-accent); padding: 10px 16px; border-radius: 999px; font-weight: 700; z-index: 30; max-width: calc(100% - 32px) }

@@ -1,8 +1,9 @@
 import { useActionState, useState } from "react";
-import type { Role } from "../../api/types";
+import type { Kind, Role } from "../../api/types";
 import { Button } from "../../components/Button";
 import { Field } from "../../components/Field";
 import { useApp } from "../../state/AppState";
+import { KindChoice } from "./KindChoice";
 
 export function AddPersonForm() {
   const { mutate } = useApp();
@@ -11,7 +12,7 @@ export function AddPersonForm() {
   const [role, setRole] = useState<Role>("staff");
   const [phone, setPhone] = useState("");
   const [doorCode, setDoorCode] = useState("");
-  const [canSeeMeals, setCanSeeMeals] = useState(true);
+  const [kind, setKind] = useState<Kind>("housekeeper");
   const [password, setPassword] = useState("");
 
   const [error, addPerson, adding] = useActionState<string | null, FormData>(async () => {
@@ -21,8 +22,8 @@ export function AddPersonForm() {
       displayName: name,
       label: label.trim(),
       role,
-      canSeeMeals: role === "owner" ? true : canSeeMeals,
     };
+    if (role === "staff") body.kind = kind;
     if (phone.trim()) body.phone = phone.trim();
     if (doorCode.trim()) body.doorCode = doorCode.trim();
     if (role === "owner") body.password = password;
@@ -34,7 +35,7 @@ export function AddPersonForm() {
       setRole("staff");
       setPhone("");
       setDoorCode("");
-      setCanSeeMeals(true);
+      setKind("housekeeper");
       setPassword("");
       return null;
     } catch (e) {
@@ -93,15 +94,14 @@ export function AddPersonForm() {
         />
       </Field>
       {role === "staff" ? (
-        <label className="field" htmlFor="npMeals">
-          <span>Can see Meals</span>
-          <input
-            id="npMeals"
-            type="checkbox"
-            checked={canSeeMeals}
-            onChange={(e) => setCanSeeMeals(e.target.checked)}
-          />
-        </label>
+        <KindChoice
+          value={kind}
+          onChange={(next) => {
+            setKind(next);
+            // Keep the suggested label in step while it's still one of the two defaults.
+            if (label === "Housekeeper" || label === "Builder") setLabel(next === "builder" ? "Builder" : "Housekeeper");
+          }}
+        />
       ) : (
         <Field label="Password" htmlFor="npPass" hint="10+ characters; owners keep a password as a backup">
           <input

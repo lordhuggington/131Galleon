@@ -1,46 +1,26 @@
 # House Run Sheet
 
-A small self-hosted app for running a home with a housekeeper: a checklist for each Tuesday and Friday visit, one-off jobs for particular days, high-protein batch meal prep planned with Claude in the Claude app, and a shopping list to order from.
+A small self-hosted app for running a home with a housekeeper and a builder: a checklist for each Tuesday and Friday visit, one-off jobs for particular days, the housekeeper's hours claims, and the builder's list of jobs with comments and photos.
 
-Two kinds of people:
+Two roles, and staff come in two kinds:
 
-| | Owner | Staff |
-|---|---|---|
-| Home screen with their own door code | ✓ | ✓ |
-| Visit checklist: tick jobs, leave notes, add photos | ✓ | ✓ |
-| Meals: recipes, prep order, portions | ✓ | only if "Can see Meals" is on |
-| Add one-off jobs to a visit | ✓ | |
-| Shopping list | ✓ | |
-| Setup: tasks, meal settings, people, door codes | ✓ | |
-| Claude connector (OAuth consent, connections list) | ✓ | |
-| Delete anyone's photo | ✓ | own photos only |
+| | Owner | Staff: housekeeper | Staff: builder |
+|---|---|---|---|
+| Home screen with their own door code | ✓ | ✓ | ✓ |
+| Visit checklist: tick tasks, leave notes, add photos | ✓ | ✓ | |
+| Add one-off jobs to a visit | ✓ | | |
+| Jobs: comment, add photos, set To do / In progress / Done | ✓ | | ✓ |
+| Jobs: add, edit and delete them | ✓ | | |
+| Hours: claim, edit or delete while not yet approved | | own claims | |
+| Hours: approve, mark paid, undo, delete | ✓ (everyone's) | | |
+| Setup: tasks, people, door codes | ✓ | | |
+| Delete anyone's photo or comment | ✓ | own only | own only |
 
-Staff get a free-text label ("Housekeeper", "Builder", "Pool service"), so anyone can be added without
-code changes. With Twilio set up (see below), everyone signs in with a code texted to their phone; owners
-also keep a password as a backup.
+Staff also get a free-text label ("Housekeeper", "Builder", "Pool service"); the `kind` (housekeeper or
+builder) is what decides which screens they get. With Twilio set up (see below), everyone signs in with a code
+texted to their phone; owners also keep a password as a backup.
 
-Stack: Python 3.11+, [Starlette](https://www.starlette.io/) (the framework under FastAPI) and SQLite on the server — three dependencies: `starlette`, `uvicorn`, `httpx`. The front end is React 19 + TypeScript, built with [Vite](https://vite.dev/) from `frontend/` into `static/` (build output, not committed).
-
-## Planning a menu
-
-Menus are not written by the server. The app is a **remote MCP connector** for the Claude app, and each prep
-session is planned by chatting.
-
-Once, to connect: in Claude, **Settings → Connectors → Add custom connector**, paste the URL from
-**Setup → Claude** (`https://your-host/mcp`), and sign in as an owner on the consent page Claude opens. The
-grant then shows up under **Setup → Claude** with when it was last used and a **Disconnect** button.
-
-After that, in any Claude chat: say which Tuesday or Friday you are cooking and roughly what you fancy. Claude
-calls `get_brief` for that day's portion counts, kcal and protein targets, store, likes, dislikes, pantry, the
-other session's leftovers and the titles not to repeat; works the whole-batch amounts and per-ingredient macros
-out with you in the chat; then posts the finished session with `save_session`. The app re-adds the numbers and
-refuses anything off target with a list of what to fix, so Claude corrects it and posts again. Open **Meals**
-and it is there, with its shopping list on **Shopping**.
-
-One session per call: saving Tuesday leaves Friday's recipes, leftovers and ticked shopping items alone. (A
-week planned before the connector also loses its shared "both" shopping rows the first time either session is
-re-planned; weeks planned through the connector have none.) There is no "Create menu" button in the app any
-more, and no Anthropic API key.
+Stack: Python 3.11+, [Starlette](https://www.starlette.io/) (the framework under FastAPI) and SQLite on the server — three dependencies: `starlette`, `uvicorn`, `httpx` (for Twilio). The front end is React 19 + TypeScript, built with [Vite](https://vite.dev/) from `frontend/` into `static/` (build output, not committed).
 
 ## Run it locally
 
@@ -49,11 +29,11 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 export HRS_DB_PATH=data/house.db HRS_COOKIE_SECURE=0   # plain http on localhost
-python -m app.cli import-seed seed                      # tasks, settings and the starter week's menu
+python -m app.cli import-seed seed                      # the visit tasks and the builder's jobs
 python -m app.cli create-user --username owen --name "Owen" --role owner
 python -m app.cli create-user --username maria --name "Maria" --role staff --label Housekeeper
+python -m app.cli create-user --username ondrej --name "Ondrej" --role staff --label Builder --kind builder
 
-export HRS_PUBLIC_URL=http://localhost:8000             # what the Claude connector advertises
 uvicorn app.main:app --reload --port 8000                # terminal 1: the API on :8000
 ```
 
@@ -65,9 +45,7 @@ npm install
 npm run dev                                             # Vite on :5173, proxying /api, /photos and /healthz to :8000
 ```
 
-Open http://localhost:5173 while developing. `npm test` runs the Vitest suites for the date, schedule, macro, shopping and phone helpers; `npm run typecheck` runs TypeScript.
-
-The consent page Claude opens when you connect is served by the API on :8000 and loads `/oauth.js` from `static/`, so run `npm run build` once (below) before trying the connector locally.
+Open http://localhost:5173 while developing. `npm test` runs the Vitest suites for the pure helpers in `src/lib` (dates, schedule, hours, phone); `npm run typecheck` runs TypeScript.
 
 For production (and to serve everything from uvicorn on :8000), build the front end once:
 
@@ -87,13 +65,14 @@ On a small droplet (1 GB is plenty):
 
 ```bash
 git clone <this repo> /opt/house-run-sheet && cd /opt/house-run-sheet
-cp .env.example .env && nano .env                        # HRS_PUBLIC_URL, TWILIO_*, tunnel token
+cp .env.example .env && nano .env                        # TWILIO_*, tunnel token
 mkdir -p data backups && sudo chown 10001:10001 data     # container runs as uid 10001
 
 docker compose build
 docker compose run --rm app python -m app.cli import-seed seed
 docker compose run --rm app python -m app.cli create-user --username owen --name "Owen" --role owner
 docker compose run --rm app python -m app.cli create-user --username maria --name "Maria" --role staff --label Housekeeper
+docker compose run --rm app python -m app.cli create-user --username ondrej --name "Ondrej" --role staff --label Builder --kind builder
 
 docker compose --profile tunnel up -d                    # app + Cloudflare Tunnel
 ```
@@ -138,7 +117,7 @@ Put their number back with `set-phone --phone` once Twilio is working; that clea
 15 3 * * * cd /opt/house-run-sheet && BACKUP_TARGET=uXXXX@uXXXX.your-storagebox.de:house-run-sheet/ ./deploy/backup.sh >> backups/backup.log 2>&1
 ```
 
-Visit photos are files, not rows: the script also copies `data/photos/` into `backups/photos/`. That is the
+Visit and job photos are files, not rows: the script also copies `data/photos/` into `backups/photos/`. That is the
 container's `/data/photos` (`HRS_PHOTOS_DIR`); if you move the photos somewhere else, change the path in the
 script to match.
 
@@ -164,11 +143,13 @@ using their old password only until they have one.
 ```bash
 python -m app.cli migrate
 python -m app.cli create-user --username NAME --name "Display name" --role owner|staff \
-    [--label "Housekeeper"] [--phone "(310) 555-1234"] [--door-code 4821] [--password PW]
+    [--label "Housekeeper"] [--kind housekeeper|builder] [--phone "(310) 555-1234"] [--door-code 4821] [--password PW]
 python -m app.cli set-password --username NAME       # owners, or staff with no phone; signs them out everywhere
 python -m app.cli set-phone --username NAME --phone "(310) 555-1234"   # staff then sign in by text only
 python -m app.cli set-phone --username NAME --clear  # removes their number; signs them out everywhere
-python -m app.cli import-seed seed                   # re-import tasks/settings/plans (upserts)
+python -m app.cli import-seed seed                   # tasks (upserted), plus jobs if there are none yet
+python -m app.cli import-seed --only jobs seed       # just the jobs: leaves tasks edited in the app alone
+python -m app.cli add-job-photo --job 4 --file stairs.jpg [--caption "Reference"]   # in the first owner's name
 ```
 
 Owners are prompted for a password when `--password` is left out; staff aren't, because they sign in by text.
@@ -186,20 +167,18 @@ app/
   main.py      ASGI app, security headers, start-up migrations
   api.py       JSON API routes + role checks
   auth.py      scrypt passwords, cookie sessions, login lockout
-  store.py     data access for tasks, visits, settings, meal plans
-  menu.py      the brief, the rules, session validation
-  oauth.py     OAuth 2.1 server (register, consent, token)
-  mcp.py       the MCP endpoint Claude talks to
+  store.py     data access for tasks, visits, jobs and hours claims
+  sms.py       Twilio Verify calls for text-message sign-in
   db.py        SQLite connection + migration runner
   cli.py       admin commands
 migrations/    numbered .sql files (tracked with PRAGMA user_version)
 frontend/      React 19 + TypeScript app (Vite)
-  src/lib/       pure logic: dates, due-task schedule, macros, shopping text, phone (Vitest)
+  src/lib/       pure logic: dates, due-task schedule, hours, phone (Vitest)
   src/state/     AppState context + reducer, polling, toasts
-  src/features/  home, visit, meals, shopping, setup, auth screens
+  src/features/  home, visit, jobs, hours, setup, auth screens
 static/        build output from `npm run build` (gitignored, served by Starlette)
-seed/          tasks, settings and the starter week exported from the Claude-hosted version
-tests/         unittest suite (API, roles, OAuth dance, MCP tools)
+seed/          the visit tasks and the builder's jobs (jobs.json)
+tests/         unittest suite (API, roles and kinds, jobs, hours, CLI, migrations)
 deploy/        backup script
 ```
 

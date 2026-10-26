@@ -1,6 +1,7 @@
 // Response shapes the app consumes. Field names must match app/api.py and app/store.py exactly.
 
 export type Role = "owner" | "staff";
+export type Kind = "housekeeper" | "builder";
 
 export interface Me {
   id: number;
@@ -10,7 +11,8 @@ export interface Me {
   label: string;
   phone: string | null;
   doorCode: string | null;
-  canSeeMeals: boolean;
+  /** Only meaningful for staff: which run sheet they get. Owners see everything. */
+  kind: Kind;
 }
 
 /** Owner-only /api/users rows: everything in Me plus admin flags. */
@@ -31,8 +33,6 @@ export interface Task {
   notes: string;
   order: number;
   active: boolean;
-  /** Only present on the seeded meal-prep task; "meals" links the row to the Meals tab. */
-  link?: string;
 }
 
 export interface Extra {
@@ -44,11 +44,6 @@ export interface Extra {
 
 export type PhotoKind = "done" | "fix";
 
-export interface PhotoAuthor {
-  id: number;
-  displayName: string;
-}
-
 export interface Photo {
   id: number;
   kind: PhotoKind;
@@ -56,7 +51,7 @@ export interface Photo {
   /** Server-built path, e.g. "/photos/ab12….jpg". */
   url: string;
   createdAt: string;
-  by: PhotoAuthor;
+  by: Person;
 }
 
 export interface Visit {
@@ -69,101 +64,86 @@ export interface Visit {
   photos: Photo[];
 }
 
-export interface SessionPortions {
-  breakfast: number;
-  main: number;
-  dessert: number;
-  covers: string;
+/** A name attached to a comment, photo, claim or status change. */
+export interface Person {
+  id: number;
+  displayName: string;
+  /** Not in the spec's wire shape; read if the server ever sends it (see lib/jobs isOwnerComment). */
+  role?: Role;
 }
 
-export interface Settings {
-  kcal: number;
-  protein: number;
-  tue: SessionPortions;
-  fri: SessionPortions;
-  store: string;
-  likes: string;
-  dislikes: string;
-  pantry: string;
-}
+export type JobStatus = "todo" | "doing" | "done";
 
-export interface Ingredient {
-  item: string;
-  amount: string;
-  kcal: number;
-  protein: number;
-}
-
-export interface Recipe {
-  title: string;
-  blurb: string;
-  portions: number;
-  portionNote: string;
-  ingredients: Ingredient[];
-  steps: string[];
-  storage: string;
-  fav: boolean;
-}
-
-export type Slot = "breakfast" | "main" | "dessert";
-export type SessionKey = "tue" | "fri";
-
-export interface PlanSession {
-  date: string;
-  covers: string;
-  timeline: string[];
-  recipes: Partial<Record<Slot, Recipe>>;
-  /** What this session's cook is expected to leave behind, for the next session to use up. */
-  leftovers: string[];
-}
-
-export interface ShoppingItem {
-  id: string;
-  item: string;
-  buy: string;
-  aisle: string;
-  /** Which prep day needs it. */
-  for: "both" | "tue" | "fri";
-  stock: boolean;
-  /** Amazon Fresh search phrase; "" on plans written before the menu asked for one. */
-  search: string;
-}
-
-export interface Plan {
-  week: string;
-  source: string;
-  note: string;
+export interface JobComment {
+  id: number;
+  body: string;
   createdAt: string;
-  sessions: Partial<Record<SessionKey, PlanSession>>;
-  /** Owner-only. */
-  shopping?: ShoppingItem[];
-  /** Owner-only: itemId -> true. */
-  got?: Record<string, boolean>;
+  by: Person;
 }
 
-/** One OAuth grant chain (a "family") behind the Claude connector — spec §7.8. */
-export interface Connection {
-  family: string;
-  clientName: string;
-  connectedAt: string;
-  lastUsedAt: string | null;
+export interface JobPhoto {
+  id: number;
+  caption: string;
+  /** Server-built path, e.g. "/photos/ab12….jpg". */
+  url: string;
+  createdAt: string;
+  by: Person;
 }
 
-/** GET /api/oauth/connections. `mcpUrl` rides along here so staff never see it. */
-export interface ConnectionsResponse { connections: Connection[]; mcpUrl: string }
+export interface Job {
+  id: number;
+  title: string;
+  details: string;
+  link: string;
+  status: JobStatus;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+  doneAt: string | null;
+  doneBy: Person | null;
+  /** Oldest first. */
+  comments: JobComment[];
+  /** Oldest first. */
+  photos: JobPhoto[];
+}
+
+export type ClaimStatus = "submitted" | "approved" | "paid";
+
+export interface HoursClaim {
+  id: number;
+  /** YYYY-MM-DD, the day worked. */
+  date: string;
+  minutes: number;
+  note: string;
+  status: ClaimStatus;
+  createdAt: string;
+  by: Person;
+  approvedAt: string | null;
+  approvedBy: Person | null;
+  paidAt: string | null;
+  paidBy: Person | null;
+}
 
 export interface MeResponse { me: Me }
 export interface StateResponse {
   me: Me;
-  tasks: Task[];
-  visits: Record<string, Visit>;
-  settings: Settings;
+  /** Read defensively: a builder has no run sheet, so the server may leave these out. */
+  tasks?: Task[];
+  visits?: Record<string, Visit>;
+  /** Owners and builders only. */
+  jobs?: Job[];
+  /** Owners (everyone's) and housekeepers (their own) only. */
+  hours?: HoursClaim[];
 }
-export interface PlanResponse { plan: Plan | null }
 export interface UsersResponse { users: User[] }
 export interface UserResponse { user: User }
 export interface TaskResponse { task: Task }
-export interface SettingsResponse { settings: Settings }
+export interface JobsResponse { jobs: Job[] }
+export interface JobResponse { job: Job }
+export interface JobCommentResponse { comment: JobComment }
+export interface JobPhotoResponse { photo: JobPhoto }
+export interface HoursResponse { claims: HoursClaim[] }
+export interface ClaimResponse { claim: HoursClaim }
 export interface LoginOptions { sms: boolean }
 export interface PhotoResponse { photo: Photo }
 export interface OkResponse { ok: true }

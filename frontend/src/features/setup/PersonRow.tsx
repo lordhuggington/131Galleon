@@ -1,10 +1,11 @@
 import { useActionState, useState } from "react";
-import type { User } from "../../api/types";
+import type { Kind, User } from "../../api/types";
 import { Button } from "../../components/Button";
 import { Field } from "../../components/Field";
 import { Pill } from "../../components/Pill";
 import { prettyPhone } from "../../lib/phone";
 import { useApp } from "../../state/AppState";
+import { KIND_LABEL, KindChoice } from "./KindChoice";
 
 export function PersonRow({ user }: { user: User }) {
   const { state, dispatch, mutate } = useApp();
@@ -15,7 +16,7 @@ export function PersonRow({ user }: { user: User }) {
   const [label, setLabel] = useState(user.label);
   const [phone, setPhone] = useState(user.phone ?? "");
   const [doorCode, setDoorCode] = useState(user.doorCode ?? "");
-  const [canSeeMeals, setCanSeeMeals] = useState(user.canSeeMeals);
+  const [kind, setKind] = useState<Kind>(user.kind);
   const [password, setPassword] = useState("");
 
   const [saveError, saveAction, saving] = useActionState<string | null, FormData>(async () => {
@@ -32,7 +33,8 @@ export function PersonRow({ user }: { user: User }) {
           label: label.trim(),
           phone: phone.trim(),
           doorCode: doorCode.trim(),
-          canSeeMeals,
+          // Kind only means something for staff; owners see everything.
+          ...(user.role === "staff" ? { kind } : {}),
         },
         "Saved",
         { quiet: true },
@@ -111,18 +113,8 @@ export function PersonRow({ user }: { user: User }) {
             onChange={(e) => setDoorCode(e.target.value)}
           />
         </Field>
-        {/* Owners always see Meals, so the toggle is only meaningful on staff rows. */}
-        {user.role === "staff" ? (
-          <label className="field" htmlFor={`pm-${user.id}`}>
-            <span>Can see Meals</span>
-            <input
-              id={`pm-${user.id}`}
-              type="checkbox"
-              checked={canSeeMeals}
-              onChange={(e) => setCanSeeMeals(e.target.checked)}
-            />
-          </label>
-        ) : null}
+        {/* Owners see everything, so the choice is only meaningful on staff rows. */}
+        {user.role === "staff" ? <KindChoice value={kind} onChange={setKind} /> : null}
         <div className="row">
           <Button type="submit" variant="primary" disabled={saving}>
             Save
@@ -134,7 +126,7 @@ export function PersonRow({ user }: { user: User }) {
               setLabel(user.label);
               setPhone(user.phone ?? "");
               setDoorCode(user.doorCode ?? "");
-              setCanSeeMeals(user.canSeeMeals);
+              setKind(user.kind);
               setEditing(false);
             }}
           >
@@ -175,7 +167,7 @@ export function PersonRow({ user }: { user: User }) {
               <span className="muted">none</span>
             )}
           </span>
-          <span className="muted">Meals {user.role === "owner" || user.canSeeMeals ? "✓" : "✗"}</span>
+          {user.role === "staff" ? <span className="muted">{KIND_LABEL[user.kind]}</span> : null}
         </div>
       </div>
       <div className="row">
@@ -215,7 +207,7 @@ export function PersonRow({ user }: { user: User }) {
               setLabel(user.label);
               setPhone(user.phone ?? "");
               setDoorCode(user.doorCode ?? "");
-              setCanSeeMeals(user.canSeeMeals);
+              setKind(user.kind);
               setEditing(true);
             }}
           >

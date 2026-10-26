@@ -3,19 +3,18 @@
 - Python 3.11+, Starlette + stdlib `sqlite3` + `httpx`. No ORM. Keep dependencies minimal.
 - Run tests: `python3 -m unittest discover -s tests -v`. Add a test for every new route, including staff being refused where relevant.
 - Schema changes: add `migrations/NNN_description.sql` (next number). Never edit an applied migration. `migrate()` runs each script with foreign keys off and then checks `PRAGMA foreign_key_check`.
-- Every API handler uses the `endpoint(role=...)` decorator in `app/api.py`; owner-only routes must pass `role="owner"` (the refusal reads "Only an owner can do that."). Roles are exactly `owner` and `staff`.
+- Every API handler uses the `endpoint(role=..., kind=...)` decorator in `app/api.py`; owner-only routes must pass `role="owner"` (the refusal reads "Only an owner can do that."). Roles are exactly `owner` and `staff`.
+- Staff have a `kind`: `housekeeper` (visit run sheet, hours) or `builder` (jobs). Routes for one of them pass `kind="housekeeper"` or `kind="builder"`, which lets owners through plus staff of that kind (the refusal reads "That isn't part of your run sheet."). `/api/state` returns every key for everyone, empty where it isn't theirs.
 - Endpoints that take raw bytes instead of JSON (photo upload) use `endpoint(raw_body=True)`.
-- Visit photos are files under `HRS_PHOTOS_DIR` (default `data/photos`) with random names (`secrets.token_hex(16)`), served by `GET /photos/{filename}` — registered before the static mount and outside `/api/` on purpose, so the `no-store` header doesn't stop the browser caching them. The handler looks the filename up in `visit_photos` before touching the disk; keep it that way.
+- Visit and job photos are files under `HRS_PHOTOS_DIR` (default `data/photos`) with random names (`secrets.token_hex(16)`), written by `save_jpeg` and removed by `unlink_photo` in `app/api.py` (use those, don't copy them), served by `GET /photos/{filename}` — registered before the static mount and outside `/api/` on purpose, so the `no-store` header doesn't stop the browser caching them. The handler looks the filename up in `visit_photos` (owners, housekeepers) or `job_photos` (owners, builders) before touching the disk, and answers 404 to anyone the photo isn't for; keep it that way.
 - `user_dict` (everyone's phone and door code) is owner-only output; `me_dict` gives a person only their own. Don't widen either.
 - Never log a door code or a sign-in code, and never log a full phone number — redact it the way `app/sms.py: _redact` does.
-- Menus come from the Claude connector (`app/mcp.py` + `app/oauth.py`), never a server-side model call. There is no `ANTHROPIC_*` config and nothing generates a menu in this repo.
-- `/mcp` is bearer-authenticated and owner-only; `/oauth/*` and `/.well-known/*` are public. All of them send `Cache-Control: no-store`.
+- There is no meal prep, menu, shopping list, Claude connector or OAuth server any more (removed in migration 005). Don't bring any of it back without a spec.
+- Hours claims are whole quarter hours (15–960 minutes), never for a future day; a claimant can change or delete one only while it is `submitted`. Another housekeeper's claim is a 404, not a 403.
 - Front end lives in `frontend/` (React 19 + TypeScript + Vite). `cd frontend && npm test` (Vitest, node env, pure logic in `src/lib` only) and `npm run typecheck`; `npm run build` writes `static/`.
 - `static/` is a build output: gitignored, never edited by hand, rebuilt by `npm run build` and by the Dockerfile's node stage.
 - CSP is `script-src 'self'`: no inline `<script>` in the built page (check with a grep after building), and never use `dangerouslySetInnerHTML`.
-- The OAuth consent page's script lives in `frontend/public/oauth.js` (copied verbatim into `static/` by the build and served at `/oauth.js`), because the CSP forbids an inline script there too.
 - Frontend dependencies stay minimal: react, react-dom, and dev-only typescript, vite, @vitejs/plugin-react, @types/react, @types/react-dom, vitest. Adding anything else needs a reason in the PR.
 - Non-GET requests must send `X-HRS: 1` (CSRF guard), including the raw-body photo upload.
 - Visit days are Tuesday and Friday; weeks are keyed by their Monday (`YYYY-MM-DD`).
-- A week's leftovers live inside each session (`plan.sessions.tue.leftovers`), not at the top of the plan.
 - Never commit `.env` or anything in `data/`.

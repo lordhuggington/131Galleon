@@ -69,7 +69,7 @@ def normalize_phone(raw: str) -> str:
 
 
 def token_hash(token: str) -> str:
-    """SHA-256 hex. Session cookies, OAuth codes and OAuth tokens are only ever stored hashed."""
+    """SHA-256 hex. Session cookies are only ever stored hashed."""
     return hashlib.sha256(token.encode()).hexdigest()
 
 
@@ -90,7 +90,7 @@ def user_for_token(conn: sqlite3.Connection, token: str | None) -> sqlite3.Row |
     if not token:
         return None
     return conn.execute(
-        """SELECT u.id, u.username, u.display_name, u.role, u.label, u.phone, u.door_code, u.can_see_meals
+        """SELECT u.id, u.username, u.display_name, u.role, u.label, u.phone, u.door_code, u.kind
            FROM sessions s
            JOIN users u ON u.id = s.user_id
            WHERE s.token_hash = ? AND s.expires_at > ? AND u.active = 1""",

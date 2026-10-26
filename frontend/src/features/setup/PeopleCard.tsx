@@ -27,8 +27,8 @@ export function PeopleCard() {
         </datalist>
       </div>
       <p className="small muted">
-        Everyone signs in with a code texted to their phone. Owners also have a password as a backup. Staff see Home and
-        Visit; turn on Meals for people who cook. Shopping and Setup are owner-only.
+        Everyone signs in with a code texted to their phone. Owners also have a password as a backup. A housekeeper sees
+        the Visit run sheet and claims their hours; a builder sees Jobs. Setup is owner-only.
       </p>
     </>
   );
