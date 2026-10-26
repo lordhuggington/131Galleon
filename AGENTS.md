@@ -16,5 +16,5 @@
 - CSP is `script-src 'self'`: no inline `<script>` in the built page (check with a grep after building), and never use `dangerouslySetInnerHTML`.
 - Frontend dependencies stay minimal: react, react-dom, and dev-only typescript, vite, @vitejs/plugin-react, @types/react, @types/react-dom, vitest. Adding anything else needs a reason in the PR.
 - Non-GET requests must send `X-HRS: 1` (CSRF guard), including the raw-body photo upload.
-- Visit days are Tuesday and Friday; weeks are keyed by their Monday (`YYYY-MM-DD`).
+- Visits happen on any day, keyed by the real date (`YYYY-MM-DD`): the Visit tab and Home open on today ("Next visit" until something is recorded, then "Today's visit"), and ‹ › step through past dates with activity (`src/lib/visits.ts`). There are no visit days and tasks have no day (`tasks.day` is always `any`). Open one-off extras carry over onto today until ticked; ticking one moves it to the date in the PATCH path. Weeks are still keyed by their Monday for hours.
 - Never commit `.env` or anything in `data/`.

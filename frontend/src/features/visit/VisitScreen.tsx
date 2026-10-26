@@ -2,8 +2,9 @@ import { useActionState, useEffect, useMemo, useState } from "react";
 import { Button } from "../../components/Button";
 import { Card } from "../../components/Card";
 import { Pill } from "../../components/Pill";
-import { fmtLong, fmtShort, nextVisit, stepVisit, today } from "../../lib/dates";
+import { fmtLong, today } from "../../lib/dates";
 import { doneDatesByTask, groupByArea, isDue, lastDoneBefore, sortTasks } from "../../lib/schedule";
+import { extrasOn, stepThrough, todayLabel, visitDates } from "../../lib/visits";
 import { useApp, useIsOwner } from "../../state/AppState";
 import { ExtraRow } from "./ExtraRow";
 import { PhotosCard } from "./PhotosCard";
@@ -15,7 +16,6 @@ export function VisitScreen() {
   const isOwner = useIsOwner();
   const { date, intent } = state.ui;
   const t0 = today();
-  const next = nextVisit(t0);
   const visit = state.visits[date];
   const done = visit?.done ?? {};
 
@@ -24,15 +24,16 @@ export function VisitScreen() {
     () => sortTasks(Object.values(state.tasks)).filter((t) => isDue(t, date, doneMap, state.visits)),
     [state.tasks, state.visits, doneMap, date],
   );
-  const extras = useMemo(
-    () => Object.entries(visit?.extras ?? {}).sort((a, b) => a[1].createdAt.localeCompare(b[1].createdAt)),
-    [visit],
-  );
+  const extras = useMemo(() => extrasOn(state.visits, date, t0), [state.visits, date, t0]);
+  const dates = useMemo(() => visitDates(state.visits, t0), [state.visits, t0]);
+  const prev = stepThrough(dates, date, -1);
+  const later = stepThrough(dates, date, 1);
+  const isToday = date === t0;
 
   const total = due.length + extras.length;
-  const doneCount = due.filter((t) => done[t.id]).length + extras.filter(([, x]) => x.done).length;
+  const doneCount = due.filter((t) => done[t.id]).length + extras.filter((x) => x.extra.done).length;
   const percent = total ? Math.round((doneCount / total) * 100) : 0;
-  const rel = date === t0 ? "Today" : date === next ? "Next visit" : date < t0 ? "Past visit" : "Coming up";
+  const rel = isToday ? todayLabel(state.visits, t0) : "Past visit";
   const groups = groupByArea(due);
 
   const [extraTitle, setExtraTitle] = useState("");
@@ -40,7 +41,8 @@ export function VisitScreen() {
     const title = extraTitle.trim();
     if (!title) return "Type the job first.";
     try {
-      await mutate("POST", `/api/visits/${date}/extras`, { title }, `Added to ${fmtShort(date)}`, { quiet: true });
+      // Added for the next visit: filed under today, and it stays on the run sheet until it's done.
+      await mutate("POST", `/api/visits/${t0}/extras`, { title }, "Added to the next visit", { quiet: true });
       setExtraTitle("");
       return null;
     } catch (e) {
@@ -61,21 +63,23 @@ export function VisitScreen() {
             type="button"
             className="icon-btn"
             aria-label="Previous visit"
-            onClick={() => dispatch({ type: "date", date: stepVisit(date, -1) })}
+            disabled={prev === null}
+            onClick={() => prev && dispatch({ type: "date", date: prev })}
           >
             ‹
           </button>
           <div>
             <h2>{fmtLong(date)}</h2>
             <div className="visit-meta">
-              <Pill variant={rel === "Today" || rel === "Next visit" ? "ok" : "default"}>{rel}</Pill>
+              <Pill variant={isToday ? "ok" : "default"}>{rel}</Pill>
             </div>
           </div>
           <button
             type="button"
             className="icon-btn"
-            aria-label="Next visit"
-            onClick={() => dispatch({ type: "date", date: stepVisit(date, 1) })}
+            aria-label="Later visit"
+            disabled={later === null}
+            onClick={() => later && dispatch({ type: "date", date: later })}
           >
             ›
           </button>
@@ -85,9 +89,9 @@ export function VisitScreen() {
             {doneCount} of {total} done
           </span>
           <span className="spacer" />
-          {date !== next ? (
-            <button type="button" className="linkish" onClick={() => dispatch({ type: "date", date: next })}>
-              Jump to next visit
+          {!isToday ? (
+            <button type="button" className="linkish" onClick={() => dispatch({ type: "date", date: t0 })}>
+              Back to today
             </button>
           ) : null}
         </div>
@@ -96,18 +100,18 @@ export function VisitScreen() {
         </div>
       </Card>
 
-      {extras.length > 0 || isOwner ? (
+      {extras.length > 0 || (isOwner && isToday) ? (
         <div className="group">
           <div className="group-h">
-            <span className="label">Added for this visit</span>
+            <span className="label">One-off jobs</span>
             <span className="mono small muted">
-              {extras.filter(([, x]) => x.done).length}/{extras.length}
+              {extras.filter((x) => x.extra.done).length}/{extras.length}
             </span>
           </div>
-          {extras.map(([id, extra]) => (
-            <ExtraRow key={id} date={date} extraId={id} extra={extra} canRemove={isOwner} />
+          {extras.map(({ id, extra, storedOn }) => (
+            <ExtraRow key={id} date={date} storedOn={storedOn} extraId={id} extra={extra} canRemove={isOwner} />
           ))}
-          {isOwner ? (
+          {isOwner && isToday ? (
             <>
               <form className="task" action={addExtra} style={{ gridTemplateColumns: "1fr auto" }}>
                 <input
@@ -117,7 +121,7 @@ export function VisitScreen() {
                   value={extraTitle}
                   onChange={(e) => setExtraTitle(e.target.value)}
                   placeholder="Add a one-off job, e.g. Sort the hall closet"
-                  aria-label="One-off job for this visit"
+                  aria-label="One-off job for the next visit"
                 />
                 <Button type="submit" disabled={addingExtra}>
                   Add

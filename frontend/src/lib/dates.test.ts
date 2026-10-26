@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  addDays, diffDays, dow, fmt, fmtDay, fmtLong, fmtShort, fmtStamp, fmtWeekday, iso, isVisitDay,
-  mondayOf, nextVisit, pad, parse, sessionOf, stepVisit, today,
+  addDays, diffDays, dow, fmt, fmtDay, fmtLong, fmtShort, fmtStamp, fmtWeekday, iso, mondayOf, pad, parse, today,
 } from "./dates";
 
 describe("pad / iso / parse", () => {
@@ -75,43 +74,6 @@ describe("mondayOf", () => {
 
   it("treats Sunday as the last day of its week", () => {
     expect(mondayOf("2026-09-27")).toBe("2026-09-21");
-  });
-});
-
-describe("visit days", () => {
-  it("only Tuesday and Friday are visit days", () => {
-    expect(isVisitDay("2026-09-21")).toBe(false);
-    expect(isVisitDay("2026-09-22")).toBe(true);
-    expect(isVisitDay("2026-09-23")).toBe(false);
-    expect(isVisitDay("2026-09-24")).toBe(false);
-    expect(isVisitDay("2026-09-25")).toBe(true);
-    expect(isVisitDay("2026-09-26")).toBe(false);
-    expect(isVisitDay("2026-09-27")).toBe(false);
-  });
-
-  it("nextVisit returns the day itself on a visit day", () => {
-    expect(nextVisit("2026-09-22")).toBe("2026-09-22");
-    expect(nextVisit("2026-09-25")).toBe("2026-09-25");
-  });
-
-  it("nextVisit walks forward from every other weekday", () => {
-    expect(nextVisit("2026-09-21")).toBe("2026-09-22");
-    expect(nextVisit("2026-09-23")).toBe("2026-09-25");
-    expect(nextVisit("2026-09-24")).toBe("2026-09-25");
-    expect(nextVisit("2026-09-26")).toBe("2026-09-29");
-    expect(nextVisit("2026-09-27")).toBe("2026-09-29");
-  });
-
-  it("stepVisit moves between Tuesdays and Fridays", () => {
-    expect(stepVisit("2026-09-22", 1)).toBe("2026-09-25");
-    expect(stepVisit("2026-09-25", 1)).toBe("2026-09-29");
-    expect(stepVisit("2026-09-25", -1)).toBe("2026-09-22");
-    expect(stepVisit("2026-09-29", -1)).toBe("2026-09-25");
-  });
-
-  it("sessionOf names the prep session", () => {
-    expect(sessionOf("2026-09-22")).toBe("tue");
-    expect(sessionOf("2026-09-25")).toBe("fri");
   });
 });
 

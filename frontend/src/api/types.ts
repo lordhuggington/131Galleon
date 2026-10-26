@@ -22,14 +22,12 @@ export interface User extends Me {
 }
 
 export type Freq = "visit" | "weekly" | "fortnightly" | "monthly";
-export type Day = "any" | "tue" | "fri";
 
 export interface Task {
   id: string;
   title: string;
   area: string;
   freq: Freq;
-  day: Day;
   notes: string;
   order: number;
   active: boolean;
@@ -54,6 +52,10 @@ export interface Photo {
   by: Person;
 }
 
+/**
+ * Everything recorded on one date. An extra sits under the date it was done on, or, while open,
+ * under the date it was added on (open ones are sent however old); see lib/visits.
+ */
 export interface Visit {
   date: string;
   note: string;

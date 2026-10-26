@@ -1,6 +1,6 @@
 # House Run Sheet
 
-A small self-hosted app for running a home with a housekeeper and a builder: a checklist for each Tuesday and Friday visit, one-off jobs for particular days, the housekeeper's hours claims, and the builder's list of jobs with comments and photos.
+A small self-hosted app for running a home with a housekeeper and a builder: a run sheet the housekeeper fills in on whatever day they come (it always opens on today, with past visits a tap away), one-off jobs that stay on it until they're done, the housekeeper's hours claims, and the builder's list of jobs with comments and photos.
 
 Two roles, and staff come in two kinds:
 
@@ -8,7 +8,7 @@ Two roles, and staff come in two kinds:
 |---|---|---|---|
 | Home screen with their own door code | ✓ | ✓ | ✓ |
 | Visit checklist: tick tasks, leave notes, add photos | ✓ | ✓ | |
-| Add one-off jobs to a visit | ✓ | | |
+| Add one-off jobs to the next visit | ✓ | | |
 | Jobs: comment, add photos, set To do / In progress / Done | ✓ | | ✓ |
 | Jobs: add, edit and delete them | ✓ | | |
 | Hours: claim, edit or delete while not yet approved | | own claims | |

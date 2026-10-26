@@ -1,6 +1,7 @@
-// Which regular tasks are due on a given visit date. Ported 1:1 from v1 static/app.js.
-import type { Day, Freq, Task, Visit } from "../api/types";
-import { diffDays, dow } from "./dates";
+// Which regular tasks are due on a given visit date. Visits happen on any day; a task is due once
+// enough days have passed since it was last ticked.
+import type { Freq, Task, Visit } from "../api/types";
+import { diffDays } from "./dates";
 
 export const AREA_ORDER: string[] = [
   "Kitchen",
@@ -25,12 +26,6 @@ export const FREQ_GAP: Partial<Record<Freq, number>> = {
   weekly: 5,
   fortnightly: 12,
   monthly: 26,
-};
-
-export const DAY_LABEL: Record<Day, string> = {
-  any: "Tue or Fri",
-  tue: "Tuesdays",
-  fri: "Fridays",
 };
 
 /** taskId -> ascending list of dates it was ticked. */
@@ -66,14 +61,10 @@ export function isDue(
   visits: Record<string, Visit>,
 ): boolean {
   if (t.active === false) return false;
-  const d = dow(date);
-  if (t.day === "tue" && d !== 2) return false;
-  if (t.day === "fri" && d !== 5) return false;
   const freq: Freq = t.freq || "visit";
   if (freq === "visit") return true;
   // Already ticked on this date: keep it on the list so it can be un-ticked.
   if (visits[date]?.done[t.id]) return true;
-  if (freq === "weekly" && t.day && t.day !== "any") return true;
   const last = lastDoneBefore(doneMap[t.id], date);
   return !last || diffDays(last, date) >= (FREQ_GAP[freq] ?? 0);
 }

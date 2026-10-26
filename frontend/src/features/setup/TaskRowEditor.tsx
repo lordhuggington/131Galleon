@@ -1,12 +1,11 @@
 import { useEffect, useState } from "react";
-import type { Day, Freq, Task } from "../../api/types";
+import type { Freq, Task } from "../../api/types";
 import { Button } from "../../components/Button";
 import { InlineConfirm } from "../../components/InlineConfirm";
-import { DAY_LABEL, FREQ_LABEL } from "../../lib/schedule";
+import { FREQ_LABEL } from "../../lib/schedule";
 import { useApp } from "../../state/AppState";
 
 const FREQS = Object.keys(FREQ_LABEL) as Freq[];
-const DAYS = Object.keys(DAY_LABEL) as Day[];
 
 export function TaskRowEditor({ task }: { task: Task }) {
   const { state, dispatch, mutate } = useApp();
@@ -88,13 +87,6 @@ export function TaskRowEditor({ task }: { task: Task }) {
         {FREQS.map((freq) => (
           <option key={freq} value={freq}>
             {FREQ_LABEL[freq]}
-          </option>
-        ))}
-      </select>
-      <select aria-label="Which day" value={task.day} onChange={(e) => patch({ day: e.target.value as Day })}>
-        {DAYS.map((day) => (
-          <option key={day} value={day}>
-            {day === "any" ? "Either day" : DAY_LABEL[day]}
           </option>
         ))}
       </select>

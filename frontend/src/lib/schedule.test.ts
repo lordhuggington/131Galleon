@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Task, Visit } from "../api/types";
 import {
-  AREA_ORDER, DAY_LABEL, FREQ_GAP, FREQ_LABEL, areaRank, doneDatesByTask, groupByArea,
+  AREA_ORDER, FREQ_GAP, FREQ_LABEL, areaRank, doneDatesByTask, groupByArea,
   isDue, lastDoneBefore, sortTasks,
 } from "./schedule";
 
@@ -11,7 +11,6 @@ function task(over: Partial<Task> & { id: string }): Task {
     title: over.title ?? "A task",
     area: over.area ?? "Kitchen",
     freq: over.freq ?? "visit",
-    day: over.day ?? "any",
     notes: over.notes ?? "",
     order: over.order ?? 0,
     active: over.active ?? true,
@@ -29,6 +28,8 @@ function visitsWith(map: Record<string, string[]>): Record<string, Visit> {
   return out;
 }
 
+// Visits happen on any day; these are a Tuesday, the Friday after and the Tuesday after that, but
+// nothing depends on the weekday.
 const TUE = "2026-09-22";
 const FRI = "2026-09-25";
 const NEXT_TUE = "2026-09-29";
@@ -47,12 +48,9 @@ describe("constants", () => {
     expect(FREQ_GAP.visit).toBeUndefined();
   });
 
-  it("labels frequencies and days for the pills", () => {
+  it("labels frequencies for the pills", () => {
     expect(FREQ_LABEL.visit).toBe("Every visit");
     expect(FREQ_LABEL.fortnightly).toBe("Every 2 weeks");
-    expect(DAY_LABEL.any).toBe("Tue or Fri");
-    expect(DAY_LABEL.tue).toBe("Tuesdays");
-    expect(DAY_LABEL.fri).toBe("Fridays");
   });
 });
 
@@ -90,19 +88,9 @@ describe("isDue", () => {
     expect(isDue(task({ id: "t1", active: false }), TUE, {}, noVisits)).toBe(false);
   });
 
-  it("pins tasks to their day", () => {
-    const tueOnly = task({ id: "t1", day: "tue" });
-    const friOnly = task({ id: "t2", day: "fri" });
-    expect(isDue(tueOnly, TUE, {}, noVisits)).toBe(true);
-    expect(isDue(tueOnly, FRI, {}, noVisits)).toBe(false);
-    expect(isDue(friOnly, FRI, {}, noVisits)).toBe(true);
-    expect(isDue(friOnly, TUE, {}, noVisits)).toBe(false);
-  });
-
-  it("shows every-visit tasks on both days", () => {
+  it("shows every-visit tasks on any day of the week", () => {
     const t = task({ id: "t1", freq: "visit" });
-    expect(isDue(t, TUE, {}, noVisits)).toBe(true);
-    expect(isDue(t, FRI, {}, noVisits)).toBe(true);
+    for (let d = 21; d <= 27; d++) expect(isDue(t, `2026-09-${d}`, {}, noVisits)).toBe(true);
   });
 
   it("keeps a task visible on a day it was already ticked, even inside the gap", () => {
@@ -113,10 +101,12 @@ describe("isDue", () => {
     expect(isDue(t, FRI, doneMap, visits)).toBe(true);
   });
 
-  it("always shows a weekly task pinned to a day, on that day", () => {
-    const t = task({ id: "t1", freq: "weekly", day: "tue" });
-    const visits = visitsWith({ "2026-09-21": ["t1"] });
-    expect(isDue(t, TUE, doneDatesByTask(visits), visits)).toBe(true);
+  it("holds a weekly task back for 5 days whatever the weekday", () => {
+    const t = task({ id: "t1", freq: "weekly" });
+    const visits = visitsWith({ "2026-09-21": ["t1"] }); // a Monday
+    const doneMap = doneDatesByTask(visits);
+    expect(isDue(t, "2026-09-25", doneMap, visits)).toBe(false); // 4 days on
+    expect(isDue(t, "2026-09-26", doneMap, visits)).toBe(true); // 5 days on, a Saturday
   });
 
   it("shows a never-done recurring task the first time", () => {

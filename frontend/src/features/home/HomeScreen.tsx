@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
-import { fmtShort, fmtWeekday, mondayOf, nextVisit, today } from "../../lib/dates";
+import { fmtShort, mondayOf, today } from "../../lib/dates";
 import { hoursLabel, minutesInWeek, summarise } from "../../lib/hours";
 import { countJobs } from "../../lib/jobs";
-import { doneDatesByTask, isDue, sortTasks } from "../../lib/schedule";
+import { readyCount as countReady, todayLabel } from "../../lib/visits";
 import { SunsetBand } from "../../components/illustrations/SunsetBand";
 import { useAccess, useApp } from "../../state/AppState";
 import { AccountPanel } from "../auth/AccountPanel";
@@ -26,22 +26,18 @@ export function HomeScreen() {
   const me = state.me;
 
   const t0 = today();
-  const visitDate = nextVisit(t0);
-  const visit = state.visits[visitDate];
+  const visit = state.visits[t0];
 
-  const readyCount = useMemo(() => {
-    const doneMap = doneDatesByTask(state.visits);
-    const due = sortTasks(Object.values(state.tasks)).filter((t) => isDue(t, visitDate, doneMap, state.visits));
-    const undoneTasks = due.filter((t) => !visit?.done[t.id]).length;
-    const undoneExtras = Object.values(visit?.extras ?? {}).filter((x) => !x.done).length;
-    return undoneTasks + undoneExtras;
-  }, [state.tasks, state.visits, visit, visitDate]);
+  const readyCount = useMemo(
+    () => countReady(Object.values(state.tasks), state.visits, t0),
+    [state.tasks, state.visits, t0],
+  );
 
   if (!me) return null;
 
   const firstName = me.displayName.split(" ")[0] ?? me.displayName;
   const photoCount = visit?.photos.length ?? 0;
-  const visitTitle = visitDate === t0 ? "Today's visit" : `${fmtWeekday(visitDate)}'s visit`;
+  const visitTitle = todayLabel(state.visits, t0);
   const visitSubtitle = `${readyCount} ${readyCount === 1 ? "task" : "tasks"} ready${
     photoCount ? ` · ${photoCount} ${photoCount === 1 ? "photo" : "photos"}` : ""
   }`;
@@ -59,7 +55,7 @@ export function HomeScreen() {
   const weekSubtitle = state.hours === null ? "" : `${hoursLabel(minutesInWeek(claims, mondayOf(t0)))} this week`;
 
   function openVisit(intent: "photo" | "note" | null) {
-    dispatch({ type: "date", date: visitDate });
+    dispatch({ type: "date", date: t0 });
     goToTab("visit", intent);
   }
 

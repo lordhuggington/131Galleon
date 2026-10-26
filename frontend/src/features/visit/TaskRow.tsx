@@ -3,7 +3,7 @@ import { Check } from "../../components/Check";
 import { Pill } from "../../components/Pill";
 import { fmtDay } from "../../lib/dates";
 import { rowTap } from "../../lib/rowTap";
-import { DAY_LABEL, FREQ_LABEL } from "../../lib/schedule";
+import { FREQ_LABEL } from "../../lib/schedule";
 import { useApp } from "../../state/AppState";
 
 export function TaskRow({
@@ -26,9 +26,6 @@ export function TaskRow({
   }
 
   const recurring = task.freq !== "visit";
-  const pinned = task.day !== "any";
-  // v1 rule: a weekly task pinned to a day never shows the "last done" pill.
-  const showLast = recurring && (task.freq !== "weekly" || !pinned);
 
   return (
     <div className={done ? "task done" : "task"} onClick={rowTap(toggle)}>
@@ -39,12 +36,9 @@ export function TaskRow({
       </div>
       <div className="side">
         {recurring ? (
-          <Pill variant="oat">
-            {FREQ_LABEL[task.freq]}
-            {pinned ? ` · ${DAY_LABEL[task.day]}` : ""}
-          </Pill>
+<Pill variant="oat">{FREQ_LABEL[task.freq]}</Pill>
         ) : null}
-        {showLast ? <Pill>{lastDone ? `last ${fmtDay(lastDone)}` : "first time"}</Pill> : null}
+        {recurring ? <Pill>{lastDone ? `last ${fmtDay(lastDone)}` : "first time"}</Pill> : null}
       </div>
     </div>
   );
