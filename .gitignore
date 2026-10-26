@@ -11,3 +11,6 @@ __pycache__/
 .DS_Store
 .superpowers/
 .playwright-mcp/
+
+# Listing photo of the house: copied onto the server by hand, never published
+frontend/public/house.jpg

@@ -22,6 +22,7 @@ export function HomeScreen() {
   const access = useAccess();
   const isOwner = access.isOwner;
   const [accountOpen, setAccountOpen] = useState(false);
+  const [housePhoto, setHousePhoto] = useState(true);
   const me = state.me;
 
   const t0 = today();
@@ -102,6 +103,11 @@ export function HomeScreen() {
           {fmtShort(t0)} · 131 Galleon St, Apt 2 · Marina del Rey
         </div>
       </SunsetBand>
+
+      {/* house.jpg is a listing photo, kept out of the public repo: present on the server, maybe not in a dev build. */}
+      {housePhoto ? (
+        <img className="house-photo" src="/house.jpg" alt="131 Galleon St" onError={() => setHousePhoto(false)} />
+      ) : null}
 
       {me.doorCode ? <DoorCodeBanner code={me.doorCode} /> : null}
 
